@@ -1,0 +1,22 @@
+[Unit]
+Description=Aegis Supply Chain Monitor (SBOM + CVE)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aegis
+Group=aegis
+WorkingDirectory=/opt/aegis
+EnvironmentFile=/opt/aegis/.env
+ExecStart=/usr/bin/node /opt/aegis/dist/supply-chain/sbom-collector.js
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-supply-chain
+NoNewPrivileges=yes
+ReadWritePaths=/var/log/aegis /opt/aegis/data
+
+[Install]
+WantedBy=multi-user.target

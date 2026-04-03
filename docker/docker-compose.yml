@@ -1,0 +1,133 @@
+version: '3.8'
+
+# ============================================================
+# Aegis Deception Services
+#
+# All containers bind ONLY to DECEPTION_IP (set in .env or
+# as an environment variable). Never bridge to the management
+# interface (wg0 / eth0).
+#
+# Usage:
+#   export DECEPTION_IP=<eth1-ip>
+#   docker compose up -d
+# ============================================================
+
+networks:
+  deception-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+
+  # ── SSH Honeypot (Cowrie) ──────────────────────────────────
+  fake-ssh:
+    image: cowrie/cowrie:latest
+    container_name: aegis-fake-ssh
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:22:2222"
+    volumes:
+      - ./honeypot/cowrie-config:/cowrie/etc:ro
+      - ./honeypot/filesystem:/cowrie/var/lib/cowrie/downloads:ro
+      - cowrie-logs:/cowrie/var/log/cowrie
+    environment:
+      - COWRIE_HOSTNAME=web-prod-01
+
+  # ── Fake Web Application ───────────────────────────────────
+  fake-web:
+    build:
+      context: ./honeypot/services/web
+      dockerfile: Dockerfile
+    container_name: aegis-fake-web
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:80:3000"
+      - "${DECEPTION_IP}:443:3443"
+    volumes:
+      - ./honeypot/filesystem:/app/files:ro
+      - ./honeypot/context-bombs:/app/bombs:ro
+      - ./honeypot/credentials:/app/creds:ro
+      - ./honeypot/config:/app/config:ro
+    environment:
+      - NODE_ENV=production
+      - CANARY_BASE_DOMAIN=${CANARY_BASE_DOMAIN}
+      - CLASSIFIER_URL=http://host.docker.internal:9000
+
+  # ── Fake PostgreSQL ────────────────────────────────────────
+  fake-db:
+    build:
+      context: ./honeypot/services/postgres
+      dockerfile: Dockerfile
+    container_name: aegis-fake-db
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:5432:5432"
+    environment:
+      - POSTGRES_DB=meridian_prod
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=Mer1d1an#2019
+
+  # ── Fake Redis ─────────────────────────────────────────────
+  fake-redis:
+    build:
+      context: ./honeypot/services/redis
+      dockerfile: Dockerfile
+    container_name: aegis-fake-redis
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:6379:6379"
+
+  # ── Fake Internal API ──────────────────────────────────────
+  fake-api:
+    build:
+      context: ./honeypot/services/api
+      dockerfile: Dockerfile
+    container_name: aegis-fake-api
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:8080:8080"
+    environment:
+      - CANARY_BASE_DOMAIN=${CANARY_BASE_DOMAIN}
+
+  # ── Fake Admin Panel ───────────────────────────────────────
+  fake-admin:
+    build:
+      context: ./honeypot/services/admin
+      dockerfile: Dockerfile
+    container_name: aegis-fake-admin
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:8443:8443"
+    environment:
+      - CANARY_BASE_DOMAIN=${CANARY_BASE_DOMAIN}
+
+  # ── Endlessh SSH Tarpit ────────────────────────────────────
+  # (runs alongside Cowrie; mapped to a different port here —
+  #  switch :22 mapping to this when you want pure tarpit mode)
+  endlessh:
+    image: shizunge/endlessh-go:latest
+    container_name: aegis-endlessh
+    restart: unless-stopped
+    networks:
+      - deception-net
+    command:
+      - -interval_ms=1000
+      - -max_clients=10000
+      - -logtostderr
+
+volumes:
+  cowrie-logs:

@@ -1,0 +1,117 @@
+/**
+ * Aegis Classifier Service
+ *
+ * Listens on an internal port for session metadata forwarded from the
+ * deception-interface proxy (nginx/envoy), runs all signals, and routes
+ * the session to the appropriate tier handler via the Tier Router.
+ *
+ * Traffic flow:
+ *   deception-if → proxy → classifier (:9000) → tier-router → tarpit|honeypot|escalate
+ */
+
+import express from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import 'dotenv/config';
+
+import { analyzeTimings } from './signals/timing.js';
+import { analyzeHeaders } from './signals/headers.js';
+import { analyzeTLS } from './signals/tls.js';
+import { analyzeBehavior } from './signals/behavioral.js';
+import { analyzeLLMSignals } from './signals/llm-detector.js';
+import { matchToolSignature } from './signals/tool-sigs.js';
+import { classify } from './scorer.js';
+import { route } from '../router/tier-router.js';
+import { logger } from '../shared/logger.js';
+
+const app = express();
+app.use(express.json());
+
+// Session state (in-memory; replace with Redis for multi-process)
+const sessions = new Map<string, SessionState>();
+
+interface SessionState {
+  id: string;
+  ip: string;
+  timestamps: number[];
+  requests: Array<{ method: string; path: string }>;
+  requestDelays: number[];
+  responsesActedOn: Array<{ responseSnippet: string; followUpPath: string }>;
+  headers: Record<string, string>;
+  ja3: string | null;
+  ja4: string | null;
+  lastSeen: number;
+}
+
+app.post('/event', (req, res) => {
+  const { sessionId: existingId, ip, method, path, headers, ja3, ja4, delayMs, responseSnippet } =
+    req.body as {
+      sessionId?: string;
+      ip: string;
+      method: string;
+      path: string;
+      headers: Record<string, string>;
+      ja3?: string;
+      ja4?: string;
+      delayMs?: number;
+      responseSnippet?: string;
+    };
+
+  const sessionId = existingId ?? uuidv4();
+  const now = Date.now();
+
+  if (!sessions.has(sessionId)) {
+    sessions.set(sessionId, {
+      id: sessionId,
+      ip,
+      timestamps: [],
+      requests: [],
+      requestDelays: [],
+      responsesActedOn: [],
+      headers,
+      ja3: ja3 ?? null,
+      ja4: ja4 ?? null,
+      lastSeen: now,
+    });
+  }
+
+  const s = sessions.get(sessionId)!;
+  s.timestamps.push(now);
+  s.requests.push({ method, path });
+  if (delayMs !== undefined) s.requestDelays.push(delayMs);
+  if (responseSnippet) s.responsesActedOn.push({ responseSnippet, followUpPath: path });
+  s.lastSeen = now;
+
+  // Run classification after we have at least 2 events
+  if (s.timestamps.length >= 2) {
+    const timing = analyzeTimings(s.timestamps);
+    const headerSig = analyzeHeaders(s.headers);
+    const tls = analyzeTLS(s.ja3, s.ja4);
+    const behavioral = analyzeBehavior(s.requests);
+    const llm = analyzeLLMSignals({
+      requestDelays: s.requestDelays,
+      paths: s.requests.map((r) => r.path),
+      responsesActedOn: s.responsesActedOn,
+    });
+    const toolMatch = matchToolSignature(s.headers['user-agent'] ?? '', s.headers);
+
+    const classification = classify({ sessionId, timing, headers: headerSig, tls, behavioral, llm, toolMatch });
+
+    logger.info('classified', { sessionId, ip, tier: classification.tier, confidence: classification.confidence, tool: classification.toolIdentified });
+
+    // Fire-and-forget routing
+    route(classification, { ip, sessionId }).catch((err) =>
+      logger.error('routing error', { err }),
+    );
+
+    res.json({ sessionId, tier: classification.tier, confidence: classification.confidence });
+  } else {
+    res.json({ sessionId, tier: null, confidence: 0 });
+  }
+});
+
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+const PORT = parseInt(process.env.CLASSIFIER_PORT ?? '9000', 10);
+app.listen(PORT, '127.0.0.1', () => {
+  logger.info(`Aegis classifier listening on 127.0.0.1:${PORT}`);
+});

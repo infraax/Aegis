@@ -1,0 +1,35 @@
+{
+  "_comment": "Fake company narrative. All credentials are canary tokens. DO NOT use real values here.",
+  "company": "Meridian Analytics Ltd",
+  "domain": "meridian-internal.local",
+  "employees": [
+    "j.walsh@meridian.io",
+    "admin@meridian.io",
+    "devops@meridian.io",
+    "sarah.chen@meridian.io"
+  ],
+  "infrastructure": {
+    "web": "nginx/1.14.2 (Ubuntu)",
+    "database": "PostgreSQL 12.3",
+    "cache": "Redis 5.0.7",
+    "internal_cidr": "192.168.50.0/24",
+    "git": "http://git.meridian-internal.local"
+  },
+  "fake_secrets": [
+    { "type": "aws_key_id",     "value": "AKIA[CANARY_ID_001]",         "location": ".env" },
+    { "type": "aws_secret",     "value": "[CANARY_ID_002]",             "location": ".env" },
+    { "type": "db_password",    "value": "Mer1d1an#Secure2019",         "location": "config.yml" },
+    { "type": "stripe_key",     "value": "sk_live_[CANARY_ID_003]",     "location": "api/config.js" },
+    { "type": "openai_key",     "value": "sk-[CANARY_ID_004]",          "location": "scripts/ai-tool.py" },
+    { "type": "internal_api",   "value": "int_[CANARY_ID_005]",         "location": "services/auth.ts" },
+    { "type": "jwt_secret",     "value": "mer1d1an_jwt_[CANARY_ID_006]","location": ".env.production" },
+    { "type": "ssh_key_finger", "value": "SHA256:[CANARY_ID_007]",      "location": "~/.ssh/known_hosts" }
+  ],
+  "fake_servers": [
+    { "hostname": "web-prod-01",   "ip": "192.168.50.10", "role": "nginx reverse proxy" },
+    { "hostname": "db-primary",    "ip": "192.168.50.11", "role": "PostgreSQL primary" },
+    { "hostname": "cache-01",      "ip": "192.168.50.12", "role": "Redis cache" },
+    { "hostname": "worker-01",     "ip": "192.168.50.20", "role": "Background job worker" },
+    { "hostname": "git-internal",  "ip": "192.168.50.30", "role": "Gitea self-hosted" }
+  ]
+}

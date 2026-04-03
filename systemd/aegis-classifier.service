@@ -1,0 +1,26 @@
+[Unit]
+Description=Aegis Classifier & Tier Router
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aegis
+Group=aegis
+WorkingDirectory=/opt/aegis
+EnvironmentFile=/opt/aegis/.env
+ExecStart=/usr/bin/node /opt/aegis/dist/classifier/index.js
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-classifier
+
+# Harden the process
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/aegis /opt/aegis/data
+
+[Install]
+WantedBy=multi-user.target
