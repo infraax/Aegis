@@ -3,12 +3,21 @@
 export interface BehavioralSignal {
   pathsRequested: string[];
   methodDistribution: Record<string, number>;
-  hasRobotsFollowUp: boolean;        // requested /robots.txt then enumerated paths from it
+  hasRobotsFollowUp: boolean;
   hasSitemapFollowUp: boolean;
-  breadthFirstPattern: boolean;      // wide + shallow (scanner)
-  depthFirstPattern: boolean;        // narrow + deep (targeted / agent)
+  breadthFirstPattern: boolean;
+  depthFirstPattern: boolean;
+  scannerPathHits: number;           // paths matching known exploit/scanner patterns
+  scannerPathRatio: number;          // fraction of requests hitting scanner paths
   confidence: number;
 }
+
+// Known exploit/scanner path signatures — scanner tools target these regardless of UA
+const SCANNER_PATH_PATTERNS = [
+  /\/wp-login\.php/i, /\/phpmyadmin/i, /\.env$/i, /\/config\.php/i,
+  /\/backup\.(zip|tar|gz)/i, /\/shell\.php/i, /\/\.git\//i, /\/xmlrpc\.php/i,
+  /\/admin\.php$/i, /\/etc\/passwd/i, /\/proc\/self/i, /cgi-bin/i,
+];
 
 export function analyzeBehavior(requests: Array<{ method: string; path: string }>): BehavioralSignal {
   const pathsRequested = requests.map((r) => r.path);
@@ -37,9 +46,18 @@ export function analyzeBehavior(requests: Array<{ method: string; path: string }
   const maxGroup = Math.max(...Object.values(prefixGroups));
   const depthFirstPattern = maxGroup / Math.max(1, pathsRequested.length) > 0.6;
 
+  // Scanner path hit-rate — real humans don't request /.env or /wp-login.php
+  const scannerPathHits = pathsRequested.filter(
+    (p) => SCANNER_PATH_PATTERNS.some((re) => re.test(p)),
+  ).length;
+  const scannerPathRatio = scannerPathHits / Math.max(1, pathsRequested.length);
+
   let confidence = 0;
   if (breadthFirstPattern && requests.length > 10) confidence += 0.4;
   if (hasRobotsFollowUp || hasSitemapFollowUp) confidence += 0.2;
+  // Key fix: scanner paths override timing/header signals — regardless of UA or speed
+  if (scannerPathRatio > 0.3) confidence += 0.5;
+  if (scannerPathHits >= 2) confidence += 0.3;
 
   return {
     pathsRequested,
@@ -49,5 +67,7 @@ export function analyzeBehavior(requests: Array<{ method: string; path: string }
     breadthFirstPattern,
     depthFirstPattern,
     confidence: Math.min(1, confidence),
+    scannerPathHits,
+    scannerPathRatio,
   };
 }

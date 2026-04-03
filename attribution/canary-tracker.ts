@@ -12,6 +12,26 @@ import { detectVPN } from './vpn-detector.js';
 import { exportEvent } from '../intel-export/gun-exporter.js';
 import { logger } from '../shared/logger.js';
 
+// Simple in-memory rate limiter per source IP: max 10 canary callbacks/minute
+const rateLimits = new Map<string, { count: number; windowStart: number }>();
+const RATE_LIMIT = 10;
+const RATE_WINDOW_MS = 60_000;
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimits.get(ip);
+  if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
+    rateLimits.set(ip, { count: 1, windowStart: now });
+    return false;
+  }
+  entry.count++;
+  if (entry.count > RATE_LIMIT) {
+    logger.warn('canary rate limit exceeded', { ip, count: entry.count });
+    return true;
+  }
+  return false;
+}
+
 export interface CanaryEvent {
   tokenId: string;
   tokenType: 'credential' | 'document' | 'dns' | 'url' | 'image';
@@ -39,6 +59,13 @@ app.get('/canary/:tokenId', async (req, res) => {
     ?? req.socket.remoteAddress
     ?? 'unknown';
 
+  // Return 1x1 GIF immediately — enrichment happens async so attacker doesn't know we're logging
+  const gif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+  res.setHeader('Content-Type', 'image/gif');
+  res.end(gif);
+
+  if (isRateLimited(sourceIP)) return; // drop silently after response sent
+
   logger.warn('CANARY FIRED', { tokenId, sourceIP, tokenType });
 
   const [asn, vpn] = await Promise.all([
@@ -62,11 +89,6 @@ app.get('/canary/:tokenId', async (req, res) => {
   };
 
   await exportEvent('homelab/alerts/canary/' + tokenId, event);
-
-  // Return a 1x1 transparent GIF so image-type canaries work in docs/emails
-  const gif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
-  res.setHeader('Content-Type', 'image/gif');
-  res.end(gif);
 });
 
 // DNS canary callback (set NS record for your canary domain to point here)

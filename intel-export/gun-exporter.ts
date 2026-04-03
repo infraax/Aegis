@@ -21,7 +21,15 @@ let connected = false;
 
 function getGun() {
   if (!gun) {
-    gun = Gun({ peers: [GUN_RELAY], localStorage: false, radisk: false });
+    gun = Gun({
+      peers: [GUN_RELAY],
+      localStorage: false,
+      radisk: false,
+      // Disable AXE multicast relay — prevents intelligence data leaking onto
+      // the local network via 233.255.255.255 when Pi5 is unreachable
+      axe: false,
+      multicast: false,
+    });
     gun.on('hi', () => { connected = true; logger.info('GUN relay connected', { relay: GUN_RELAY }); });
     gun.on('bye', () => { connected = false; logger.warn('GUN relay disconnected'); });
   }
@@ -30,7 +38,8 @@ function getGun() {
 
 export async function exportEvent(
   namespace: string,
-  data: Record<string, unknown>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any,
 ): Promise<void> {
   try {
     const g = getGun();

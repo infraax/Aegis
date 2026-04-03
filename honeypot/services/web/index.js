@@ -14,8 +14,12 @@ const crypto = require('crypto');
 const axios = require('axios');
 
 const app = express();
+app.disable('x-powered-by');  // don't leak Node.js/Express
+app.use((req, res, next) => { res.removeHeader('X-Powered-By'); next(); }); // belt-and-suspenders
 const CLASSIFIER_URL = process.env.CLASSIFIER_URL ?? 'http://127.0.0.1:9000';
 const CANARY_DOMAIN = process.env.CANARY_BASE_DOMAIN ?? 'canary.example.com';
+// Context bombs are at different paths depending on whether running in Docker or bare
+const BOMB_DIRS = ['/app/bombs', path.join(__dirname, '../../context-bombs'), path.join(__dirname, '../../../honeypot/context-bombs')];
 
 // Session tracking (in-memory per container; use Redis for multi-replica)
 const sessions = new Map();
@@ -96,12 +100,14 @@ app.get('/dashboard', (req, res) => {
 
 // Serve context bombs as fake internal files
 app.get(['/files/:name', '/static/:name', '/config/:name'], (req, res) => {
-  const bombDir = '/app/bombs';
   const files = { '.env': 'env-file.txt', 'readme.md': 'readme-internal.md', 'api.json': 'api-spec.json' };
   const bombFile = files[req.params.name] ?? 'env-file.txt';
+  // Resolve bomb directory — works both inside Docker (/app/bombs) and bare-metal
+  const bombDir = BOMB_DIRS.find(d => fs.existsSync(d)) ?? BOMB_DIRS[0];
   const filePath = path.join(bombDir, bombFile);
   if (fs.existsSync(filePath)) {
     res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Server', 'nginx/1.14.2 (Ubuntu)');
     res.sendFile(filePath);
   } else {
     res.status(404).send('Not found');
@@ -109,10 +115,12 @@ app.get(['/files/:name', '/static/:name', '/config/:name'], (req, res) => {
 });
 
 // Fake API docs (context bomb)
-app.get('/docs', (req, res) => {
-  const specPath = '/app/bombs/api-spec.json';
+app.get(['/docs', '/openapi.json', '/swagger.json', '/api-docs'], (req, res) => {
+  const bombDir = BOMB_DIRS.find(d => fs.existsSync(d)) ?? BOMB_DIRS[0];
+  const specPath = path.join(bombDir, 'api-spec.json');
   if (fs.existsSync(specPath)) {
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Server', 'nginx/1.14.2 (Ubuntu)');
     res.sendFile(specPath);
   } else {
     res.json({ openapi: '3.0.0', info: { title: 'Meridian API', version: '2.1.0' } });

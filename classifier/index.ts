@@ -29,6 +29,8 @@ app.use(express.json());
 // Session state (in-memory; replace with Redis for multi-process)
 const sessions = new Map<string, SessionState>();
 
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes — evict idle sessions
+
 interface SessionState {
   id: string;
   ip: string;
@@ -40,7 +42,17 @@ interface SessionState {
   ja3: string | null;
   ja4: string | null;
   lastSeen: number;
+  tier: 1 | 2 | 3 | null;    // cached classification — only route once per tier change
+  routedAt: number | null;    // last time we called route()
 }
+
+// Periodic session eviction to prevent unbounded memory growth
+setInterval(() => {
+  const cutoff = Date.now() - SESSION_TTL_MS;
+  for (const [id, s] of sessions) {
+    if (s.lastSeen < cutoff) sessions.delete(id);
+  }
+}, 5 * 60 * 1000);
 
 app.post('/event', (req, res) => {
   const { sessionId: existingId, ip, method, path, headers, ja3, ja4, delayMs, responseSnippet } =
@@ -71,6 +83,8 @@ app.post('/event', (req, res) => {
       ja3: ja3 ?? null,
       ja4: ja4 ?? null,
       lastSeen: now,
+      tier: null,
+      routedAt: null,
     });
   }
 
@@ -98,10 +112,14 @@ app.post('/event', (req, res) => {
 
     logger.info('classified', { sessionId, ip, tier: classification.tier, confidence: classification.confidence, tool: classification.toolIdentified });
 
-    // Fire-and-forget routing
-    route(classification, { ip, sessionId }).catch((err) =>
-      logger.error('routing error', { err }),
-    );
+    // Only route when tier changes (or on first classification) — prevent routing spam
+    if (classification.tier !== s.tier) {
+      s.tier = classification.tier;
+      s.routedAt = now;
+      route(classification, { ip, sessionId }).catch((err) =>
+        logger.error('routing error', { err }),
+      );
+    }
 
     res.json({ sessionId, tier: classification.tier, confidence: classification.confidence });
   } else {

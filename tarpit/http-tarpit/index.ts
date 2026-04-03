@@ -16,11 +16,15 @@ import { logger } from '../../shared/logger.js';
 const DRIP_INTERVAL_MS = 30_000;
 const PORT = parseInt(process.env.HTTP_TARPIT_PORT ?? '8888', 10);
 
-const HTML_HEADER = `<!DOCTYPE html><html><head><title>Loading...</title></head><body>
-<!-- session-id: `;
-const HTML_MID = ` -->
-<p>Please wait while we load your content...</p>
+// session-id is embedded as a canary URL (invisible pixel), NOT in an HTML comment
+// which would let a sophisticated attacker confirm they're in a honeypot.
+const buildHtml = (sessionId: string, canaryDomain: string) =>
+  `<!DOCTYPE html><html><head><title>Meridian Analytics — Loading</title></head><body>
+<div class="app-loader"><h1>Meridian Analytics</h1><p>Loading dashboard data, please wait...</p></div>
+<img src="https://${canaryDomain}/canary/${sessionId}?type=image" width="1" height="1" style="position:absolute;opacity:0">
 `;
+
+const CANARY_DOMAIN = process.env.CANARY_BASE_DOMAIN ?? 'canary.example.com';
 
 function createDripServer(): http.Server {
   return http.createServer((req, res) => {
@@ -35,15 +39,18 @@ function createDripServer(): http.Server {
       userAgent: req.headers['user-agent'],
     });
 
+    // Mimic real nginx chunked response — no X-Powered-By, no Node.js tells
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Transfer-Encoding': 'chunked',
       'X-Content-Type-Options': 'nosniff',
-      'Server': 'nginx/1.14.2',
+      'Server': 'nginx/1.14.2 (Ubuntu)',
+      'X-Frame-Options': 'SAMEORIGIN',
+      'Cache-Control': 'no-cache',
     });
 
-    // Send initial HTML with canary token
-    res.write(HTML_HEADER + sessionId + HTML_MID);
+    // Send initial HTML (canary is an invisible pixel, not a comment)
+    res.write(buildHtml(sessionId, CANARY_DOMAIN));
 
     const interval = setInterval(() => {
       try {
