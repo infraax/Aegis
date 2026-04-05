@@ -14,10 +14,10 @@ export async function route(
   classification: Classification,
   meta: { ip: string; sessionId: string },
 ): Promise<void> {
-  const { tier, confidence, toolIdentified } = classification;
+  const { tier, confidence, toolIdentified, techniqueIds } = classification;
   const { ip, sessionId } = meta;
 
-  const base = { ip, sessionId, tier, confidence, tool: toolIdentified, ts: Date.now() };
+  const base = { ip, sessionId, tier, confidence, tool: toolIdentified, techniqueIds, ts: Date.now() };
 
   switch (tier) {
     case 1:

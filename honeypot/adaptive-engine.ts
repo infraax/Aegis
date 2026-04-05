@@ -8,6 +8,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { exportEvent } from '../intel-export/gun-exporter.js';
+import { signCanaryToken } from './canary-crypto.js';
 import { logger } from '../shared/logger.js';
 
 export interface BehaviorEvent {
@@ -90,8 +91,16 @@ export function selectContextBomb(session: AdaptiveSession): string {
 }
 
 export function issueCanaryToken(session: AdaptiveSession, type: string): string {
-  const id = uuidv4().replace(/-/g, '').slice(0, 16).toUpperCase();
-  session.canaryTokensExposed.push(id);
-  logger.info('canary token issued', { sessionId: session.sessionId, id, type });
-  return id;
+  const token = signCanaryToken({
+    sessionId: session.sessionId,
+    type,
+    issuedAt: Date.now(),
+  });
+  session.canaryTokensExposed.push(token);
+  logger.info('canary token issued', {
+    sessionId: session.sessionId,
+    type,
+    tokenLength: token.length,
+  });
+  return token;
 }

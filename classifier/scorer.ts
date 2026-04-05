@@ -20,6 +20,7 @@ export interface Classification {
   toolIdentified: string | null;
   sessionId: string;
   timestamp: number;
+  techniqueIds: string[];  // ATT&CK technique IDs observed in this session
 }
 
 // Tier thresholds — tune after observing real traffic
@@ -81,6 +82,7 @@ export function classify(input: {
     confidence: Math.min(1, confidence),
     signals,
     toolIdentified,
+    techniqueIds: behavioral.techniqueIds,
     sessionId,
     timestamp: Date.now(),
   };

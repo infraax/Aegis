@@ -1,5 +1,7 @@
 // Behavioral pattern analysis — tracks request sequences within a session.
 
+import { lookupTechniquesForPaths } from './attack-db.js';
+
 export interface BehavioralSignal {
   pathsRequested: string[];
   methodDistribution: Record<string, number>;
@@ -10,6 +12,7 @@ export interface BehavioralSignal {
   scannerPathHits: number;           // paths matching known exploit/scanner patterns
   scannerPathRatio: number;          // fraction of requests hitting scanner paths
   confidence: number;
+  techniqueIds: string[];            // ATT&CK technique IDs inferred from observed paths
 }
 
 // Known exploit/scanner path signatures — scanner tools target these regardless of UA
@@ -59,6 +62,8 @@ export function analyzeBehavior(requests: Array<{ method: string; path: string }
   if (scannerPathRatio > 0.3) confidence += 0.5;
   if (scannerPathHits >= 2) confidence += 0.3;
 
+  const techniqueIds = lookupTechniquesForPaths(pathsRequested);
+
   return {
     pathsRequested,
     methodDistribution,
@@ -69,5 +74,6 @@ export function analyzeBehavior(requests: Array<{ method: string; path: string }
     confidence: Math.min(1, confidence),
     scannerPathHits,
     scannerPathRatio,
+    techniqueIds,
   };
 }

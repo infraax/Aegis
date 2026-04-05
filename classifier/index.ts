@@ -19,9 +19,13 @@ import { analyzeTLS } from './signals/tls.js';
 import { analyzeBehavior } from './signals/behavioral.js';
 import { analyzeLLMSignals } from './signals/llm-detector.js';
 import { matchToolSignature } from './signals/tool-sigs.js';
+import { loadStixBundle } from './signals/attack-db.js';
 import { classify } from './scorer.js';
 import { route } from '../router/tier-router.js';
 import { logger } from '../shared/logger.js';
+
+// Load ATT&CK STIX bundle once at startup — non-fatal if bundle absent
+loadStixBundle();
 
 const app = express();
 app.use(express.json());
@@ -121,7 +125,12 @@ app.post('/event', (req, res) => {
       );
     }
 
-    res.json({ sessionId, tier: classification.tier, confidence: classification.confidence });
+    res.json({
+      sessionId,
+      tier: classification.tier,
+      confidence: classification.confidence,
+      techniqueIds: classification.techniqueIds,
+    });
   } else {
     res.json({ sessionId, tier: null, confidence: 0 });
   }
