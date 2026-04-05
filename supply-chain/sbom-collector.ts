@@ -11,6 +11,10 @@ import path from 'path';
 import cron from 'node-cron';
 import { logger } from '../shared/logger.js';
 
+import { scanModelFiles, SCANNABLE_EXTENSIONS } from './model-scanner.js';
+import { extractGithubRepo, scanRepoGeo } from './geo-enricher.js';
+import { assessExposure } from './correlator.js';
+
 const DB_PATH = process.env.SBOM_DB_PATH ?? '/opt/aegis/data/sbom.sqlite';
 let db: Database.Database;
 
@@ -27,13 +31,15 @@ export function initDB(): void {
   db = new Database(DB_PATH);
   db.exec(`
     CREATE TABLE IF NOT EXISTS packages (
-      id       INTEGER PRIMARY KEY AUTOINCREMENT,
-      node     TEXT NOT NULL,
-      manager  TEXT NOT NULL,
-      name     TEXT NOT NULL,
-      version  TEXT NOT NULL,
-      location TEXT,
-      last_updated INTEGER NOT NULL
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      node                TEXT NOT NULL,
+      manager             TEXT NOT NULL,
+      name                TEXT NOT NULL,
+      version             TEXT NOT NULL,
+      location            TEXT,
+      last_updated        INTEGER NOT NULL,
+      maintainer_geo_json TEXT,          -- JSON: GeoScanResult, nullable until enriched
+      geo_scanned_at      INTEGER        -- Unix ms of last geo enrichment run
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_pkg ON packages(node, manager, name);
 
@@ -46,6 +52,16 @@ export function initDB(): void {
       old_ver   TEXT,
       new_ver   TEXT,
       event     TEXT NOT NULL  -- 'added' | 'changed' | 'removed'
+    );
+
+    CREATE TABLE IF NOT EXISTS model_scan_results (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts          INTEGER NOT NULL,
+      node        TEXT NOT NULL,
+      file_path   TEXT NOT NULL,
+      safe        INTEGER NOT NULL,  -- 1 = safe, 0 = malicious
+      findings    TEXT,              -- JSON array of fickling output lines
+      duration_ms INTEGER
     );
   `);
   logger.info('SBOM database initialised', { path: DB_PATH });
@@ -98,6 +114,83 @@ export function startScheduler(collectFn: () => Promise<Package[]>): void {
       const pkgs = await collectFn();
       const changes = upsertPackages(pkgs);
       logger.info('SBOM collection complete', { total: pkgs.length, changes: changes.length });
+
+      // ── Stage 2A: Scan newly discovered model files with fickling ──────────
+      const modelPaths = pkgs
+        .filter((p) => {
+          const ext = p.location?.split('.').pop();
+          return ext && SCANNABLE_EXTENSIONS.has(`.${ext}`);
+        })
+        .map((p) => p.location)
+        .filter((loc): loc is string => Boolean(loc));
+
+      if (modelPaths.length > 0) {
+        logger.info('SBOM: running fickling model scan', { count: modelPaths.length });
+        const scanResults = await scanModelFiles(modelPaths);
+
+        // Persist results and trigger exposure alerts for malicious files
+        const insertScan = db.prepare(
+          `INSERT INTO model_scan_results(ts,node,file_path,safe,findings,duration_ms)
+           VALUES(?,?,?,?,?,?)`,
+        );
+        for (const r of scanResults) {
+          if (r.skipped) continue;
+          const pkg = pkgs.find((p) => p.location === r.filePath);
+          insertScan.run(
+            Date.now(),
+            pkg?.node ?? 'unknown',
+            r.filePath,
+            r.safe ? 1 : 0,
+            JSON.stringify(r.findings),
+            r.durationMs,
+          );
+
+          if (!r.safe && pkg) {
+            // Build a synthetic advisory and route through the existing exposure pipeline
+            await assessExposure(pkg, {
+              id: `FICKLING-${Date.now()}`,
+              summary: `Malicious pickle bytecode detected in ${r.filePath}`,
+              published: new Date().toISOString(),
+              modified: new Date().toISOString(),
+              aliases: [],
+              severity: [{ type: 'CVSS_V3', score: '10.0' }],
+              affected: [{
+                package: { name: pkg.name, ecosystem: pkg.manager },
+                versions: [pkg.version],
+                ranges: [],
+              }],
+            });
+          }
+        }
+      }
+
+      // ── Stage 2B: Geo-enrich newly added packages ─────────────────────────
+      const newPkgs = changes
+        .filter((c) => c.event === 'added')
+        .map((c) => c.pkg);
+
+      for (const pkg of newPkgs) {
+        const repoSlug = extractGithubRepo(pkg.location ?? '');
+        if (!repoSlug) continue;
+
+        // Run async — does not block the scheduler tick
+        scanRepoGeo(repoSlug).then((geoResult) => {
+          db.prepare(
+            `UPDATE packages SET maintainer_geo_json=?, geo_scanned_at=?
+             WHERE node=? AND manager=? AND name=?`,
+          ).run(JSON.stringify(geoResult), Date.now(), pkg.node, pkg.manager, pkg.name);
+
+          if (geoResult.flagged) {
+            logger.warn('SBOM: geo-concentration flag on new package', {
+              package: pkg.name,
+              repo: repoSlug,
+              topCountry: geoResult.topCountry,
+              concentrationScore: geoResult.concentrationScore,
+            });
+          }
+        }).catch((err) => logger.error('SBOM: geo enrichment failed', { pkg: pkg.name, err }));
+      }
+
     } catch (err) {
       logger.error('SBOM collection failed', { err });
     }
