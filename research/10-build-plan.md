@@ -273,6 +273,98 @@ The investigation is already done by the time you look at it.
 
 ---
 
+## Stage 3.5 — Network Tap: JA3/JA4 TLS Fingerprinting + Beacon Detection
+**Pattern D (Docker sidecar)**
+**Touches:** `classifier/signals/` — new `ja3-signal.ts` source; `classifier/index.ts` startup
+**Does NOT touch:** router, honeypot, supply-chain, tarpit
+**Session budget:** 1 session
+**Priority:** HIGH — research doc identifies this as Week 1–4, highest ROI gap
+
+### Why this was missing and why it matters now
+
+The research doc (11-architecture-research.md) is explicit: **JA3/JA4 operates at
+the top of the Pyramid of Pain** — attackers cannot trivially change their TLS
+implementation. HIVE-pattern C2, every modern framework (Cobalt Strike, Sliver,
+Brute Ratel, Havoc), and Metasploit all have distinct TLS fingerprints. Aegis
+currently only sees HTTP metadata *after* the proxy decrypts it — it never sees
+the raw TLS handshake. This is the single biggest structural gap.
+
+### What we're doing
+
+1. Add Suricata (IDS) + Zeek (network analysis) to `docker-compose.yml` as a
+   passive tap on the deception interface. They output EVE JSON logs.
+2. Add a lightweight Suricata EVE JSON tail reader in `attribution/suricata-tail.ts`
+   that watches `/var/log/suricata/eve.json` and pushes JA3/JA4 hashes and
+   alert events into a shared Redis key.
+3. Add `classifier/signals/ja3-signal.ts` — reads JA3/JA4 from the session's
+   TLS metadata (already forwarded by the proxy in headers) and scores it
+   against a known-malicious fingerprint list.
+4. Wire `ja3-signal.ts` into `scorer.ts` as a new weighted signal.
+
+**Graceful degradation:** if no JA3 header is present (proxy didn't forward it),
+the signal returns confidence 0 — existing scoring unchanged.
+
+**How:**
+```yaml
+# docker-compose.yml additions
+suricata:
+  image: jasonish/suricata:latest
+  network_mode: host          # needs raw packet access
+  cap_add: [NET_ADMIN, SYS_NICE]
+  volumes:
+    - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+    - suricata-logs:/var/log/suricata
+  command: ["-c", "/etc/suricata/suricata.yaml", "--af-packet"]
+
+zeek:
+  image: zeekurity/zeek:latest
+  network_mode: host
+  volumes:
+    - zeek-logs:/usr/local/zeek/logs
+    - ./zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
+```
+
+**What you get:**
+- Every TLS connection to the deception interface gets a JA3/JA4 fingerprint
+- Metasploit, Cobalt Strike, Sliver all fingerprinted before they send a byte of payload
+- Suricata's 6,500 ET Open C2 rules fire on known-bad traffic
+- Zeek logs feed RITA beacon scoring as a separate async enrichment
+
+---
+
+## Stage 3.6 — ARP Integrity Monitor
+**Pattern C (subprocess bridge)**
+**Touches:** `attribution/` — new `arp-monitor.ts`
+**Does NOT touch:** anything existing
+**Session budget:** 1 session (the research doc says ~100 lines of code)
+**Priority:** HIGH — "Critical" risk in 2026 risk matrix, cheapest coverage gap
+
+### What we're doing
+
+A Python scapy daemon that continuously monitors ARP traffic on the deception
+interface, maintains a baseline ARP table (gateway MAC → IP), and alerts the
+moment any device claims to own the gateway IP.
+
+**How:**
+1. Write `scripts/arp_monitor.py` — ~100-line Python scapy daemon:
+   - Sniffs ARP packets on the deception interface
+   - Maintains trusted MAC→IP map seeded from the real ARP table at startup
+   - On conflict: outputs JSON alert to stdout
+   - Runs until killed; restartable
+2. Write `attribution/arp-monitor.ts` — TypeScript bridge (Pattern C):
+   - Spawns `arp_monitor.py` as a long-running child process
+   - Reads JSON alerts from stdout line-by-line
+   - Exports each alert via `exportEvent('homelab/threats/arp/...')`
+   - Auto-restarts the process if it dies
+3. Add `arp-monitor` to `systemd/` as a service unit
+
+**What you get:**
+Archimedes-style LAN MITM (ARP poisoning of the gateway) is detected in real time
+and exported as an intel event. No kernel modules, no special permissions beyond
+raw socket access. Covers ATT&CK T1557.002.
+
+---
+
 ## Stage 4 — Enforcement Layer
 **Pattern E (system daemon)**
 **Touches:** Nothing in Aegis code — this is purely infrastructure
@@ -434,9 +526,14 @@ Stage 5  (Gaffer)             ← benefits from Stage 1A (richer entities)
 Stage 6  (CamFlow)            ← requires Stage 5  (needs Gaffer for provenance storage)
 ```
 
-Stages 1A, 1B, 2A, 2B, 3, 4 are completely independent.
+Stages 1A, 1B, 2A, 2B, 3, 3.5, 3.6, 4 are completely independent.
 Stage 5 is independent but produces more value if 1A and 3 are already done.
 Stage 6 depends on Stage 5.
+
+Stages 3.5 and 3.6 were inserted after research/11-architecture-research.md
+(Vault 7 + adversarial AI analysis) identified them as the highest-ROI gaps:
+network-level TLS fingerprinting and LAN ARP integrity — neither covered by
+Stages 1–3.
 
 ---
 
@@ -449,6 +546,8 @@ Stage 6 depends on Stage 5.
 | fickling | C (subprocess) | No | No — pip install | pip upgrade |
 | gitgeo | C (subprocess) | No | No — pip install | pip upgrade |
 | Velociraptor | D (Docker sidecar) | No | No — Docker pull | image tag pin |
+| Suricata + Zeek | D (Docker sidecar) | No | No — Docker pull | image tag pin |
+| ARP monitor | C (subprocess) | No | No — scapy script | scripts/ owned |
 | Tetragon | E (system daemon) | No | No — apt/binary | apt upgrade |
 | Gaffer | D (Docker sidecar) | No | No — Docker pull | image tag pin |
 | CamFlow | E (kernel module) | No | No — apt install | apt upgrade |
@@ -469,6 +568,8 @@ Every stage is designed to be completable in one session without getting cut off
 | S1 | ATT&CK STIX + Tink canary tokens | Zero — additive only |
 | S2 | fickling + gitgeo supply chain | Zero — new modules only |
 | S3 | Velociraptor + Tier 3 hunt trigger | Minimal — 2 lines in tier-router |
+| S3.5 | Suricata+Zeek docker tap + JA3 signal | Additive — new signal, new weight |
+| S3.6 | ARP monitor daemon + bridge | Additive — new attribution module |
 | S4 | Tetragon TracingPolicy + event bridge | Zero — infra only |
 | S5 | Gaffer schema + exporter (GUN stays as fallback) | Zero — env var switchover |
 | S6 | CamFlow bridge + Gaffer provenance schema | Additive to Stage 5 |
