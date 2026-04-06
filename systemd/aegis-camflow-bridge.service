@@ -1,0 +1,59 @@
+# systemd unit: aegis-camflow-bridge
+#
+# Manages the Aegis TypeScript bridge that reads CamFlow OS-level provenance
+# events from the CamFlow output socket and correlates them to active Aegis
+# sessions, exporting full kill-chain provenance into the Gaffer graph.
+#
+# Prerequisites:
+#   sudo add-apt-repository ppa:camflow/camflow
+#   sudo apt install camconfd camflowd
+#   sudo systemctl enable --now camconfd camflowd
+#
+# Install:
+#   sudo cp systemd/aegis-camflow-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aegis-camflow-bridge
+
+[Unit]
+Description=Aegis CamFlow OS Provenance Bridge
+Documentation=https://camflow.io
+After=network.target camflowd.service
+Wants=camflowd.service
+PartOf=aegis.target
+
+[Service]
+Type=simple
+User=aegis
+Group=aegis
+WorkingDirectory=/opt/aegis
+
+ExecStart=/usr/bin/node /opt/aegis/dist/classifier/index.js
+
+# CamFlow socket is owned by group camflow — add aegis user:
+#   sudo usermod -aG camflow aegis
+SupplementaryGroups=camflow
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/aegis /run/aegis
+
+# Environment
+EnvironmentFile=-/etc/aegis/aegis.env
+Environment=NODE_ENV=production
+Environment=CAMFLOW_SOCK=/run/camflowd.sock
+Environment=INTEL_BACKEND=gaffer
+
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-camflow-bridge
+
+[Install]
+WantedBy=multi-user.target

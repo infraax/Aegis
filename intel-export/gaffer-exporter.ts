@@ -68,6 +68,7 @@ export interface GafferElement {
 const NS_SESSION    = /^homelab\/sessions\/(.+)$/;
 const NS_TETRAGON   = /^homelab\/threats\/tetragon\//;
 const NS_ARP        = /^homelab\/threats\/arp\/(.+)$/;
+const NS_PROVENANCE = /^homelab\/provenance\/(.+)$/;
 
 function buildElements(namespace: string, data: Record<string, unknown>): GafferElement[] {
   const ts = (data['ts'] as number | undefined) ?? Date.now();
@@ -221,6 +222,40 @@ function buildElements(namespace: string, data: Record<string, unknown>): Gaffer
       properties:  { seenAt: ts },
     });
 
+    return elements;
+  }
+
+  // ── CamFlow provenance chain ──────────────────────────────────────────────
+  const provMatch = NS_PROVENANCE.exec(namespace);
+  if (provMatch) {
+    const sessionId = provMatch[1];
+    const vertexId  = `prov:${sessionId}@${ts}`;
+    elements.push({
+      class:  'uk.gov.gchq.gaffer.data.element.Entity',
+      group:  'ProvenanceEvent',
+      vertex: vertexId,
+      properties: {
+        sessionId,
+        ip:         data['ip']         ?? '',
+        eventCount: data['eventCount'] ?? 0,
+        labels:     Array.isArray(data['labels'])
+          ? (data['labels'] as string[]).join(',')
+          : String(data['labels'] ?? ''),
+        techniques: Array.isArray(data['techniques'])
+          ? (data['techniques'] as string[]).join(',')
+          : String(data['techniques'] ?? ''),
+        startedAt:  data['startedAt'] ?? ts,
+        ts,
+      },
+    });
+    elements.push({
+      class:       'uk.gov.gchq.gaffer.data.element.Edge',
+      group:       'SessionHasProvenance',
+      source:      sessionId,
+      destination: vertexId,
+      directed:    true,
+      properties:  { capturedAt: ts },
+    });
     return elements;
   }
 

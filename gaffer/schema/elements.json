@@ -56,6 +56,19 @@
         "ts":           "long"
       }
     },
+    "ProvenanceEvent": {
+      "description": "A CamFlow OS-level provenance causal chain correlated to a session",
+      "vertex": "string",
+      "properties": {
+        "sessionId":  "string",
+        "ip":         "string",
+        "eventCount": "integer",
+        "labels":     "string",
+        "techniques": "string",
+        "startedAt":  "long",
+        "ts":         "long"
+      }
+    },
     "ARPEvent": {
       "description": "An ARP integrity violation (T1557.002)",
       "vertex": "string",
@@ -104,6 +117,15 @@
       "directed":    true,
       "properties": {
         "seenAt": "long"
+      }
+    },
+    "SessionHasProvenance": {
+      "description": "A provenance causal chain was captured for a session",
+      "source":      "Session",
+      "destination": "ProvenanceEvent",
+      "directed":    true,
+      "properties": {
+        "capturedAt": "long"
       }
     },
     "IPTriggeredARPEvent": {

@@ -24,6 +24,7 @@ import { classify } from './scorer.js';
 import { route } from '../router/tier-router.js';
 import { startEveTail, getJA3ForIp } from '../attribution/suricata-tail.js';
 import { startTetragonEvents } from '../attribution/tetragon-events.js';
+import { startCamflowBridge, registerSession } from '../attribution/camflow-bridge.js';
 import { logger } from '../shared/logger.js';
 
 // Load ATT&CK STIX bundle once at startup — non-fatal if bundle absent
@@ -34,6 +35,9 @@ startEveTail();
 
 // Start Tetragon eBPF event bridge — non-fatal if Tetragon not installed
 startTetragonEvents();
+
+// Start CamFlow provenance bridge — non-fatal if CamFlow not installed
+startCamflowBridge();
 
 const app = express();
 app.use(express.json());
@@ -133,6 +137,8 @@ app.post('/event', (req, res) => {
     if (classification.tier !== s.tier) {
       s.tier = classification.tier;
       s.routedAt = now;
+      // Register with CamFlow bridge for provenance correlation
+      registerSession(sessionId, ip, classification.tier);
       route(classification, { ip, sessionId }).catch((err) =>
         logger.error('routing error', { err }),
       );
