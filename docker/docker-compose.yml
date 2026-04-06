@@ -129,5 +129,32 @@ services:
       - -max_clients=10000
       - -logtostderr
 
+  # ── Velociraptor (Tier 3 forensic response) ───────────────────────────────
+  # Binds ONLY to 127.0.0.1 — never exposed on the deception interface.
+  # API key is generated on first run: docker compose exec velociraptor
+  #   velociraptor --config /etc/velociraptor/config.yaml config api_client
+  #   --name aegis --role analyst,api > /etc/velociraptor/api.config.yaml
+  velociraptor:
+    image: velocidex/velociraptor:latest
+    container_name: aegis-velociraptor
+    restart: unless-stopped
+    volumes:
+      - velociraptor-data:/opt/velociraptor
+      - ./velociraptor/server.config.yaml:/etc/velociraptor/config.yaml:ro
+    ports:
+      - "127.0.0.1:8889:8889"    # REST/gRPC-gateway API  — management only
+      - "127.0.0.1:8000:8000"    # Web UI                 — management only
+    networks:
+      - deception-net
+    environment:
+      - VELOCIRAPTOR_CONFIG=/etc/velociraptor/config.yaml
+    command: ["frontend", "--config", "/etc/velociraptor/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8889/api/v1/GetServerInfo"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   cowrie-logs:
+  velociraptor-data:

@@ -1,0 +1,101 @@
+# Aegis Custom Artifact: Tier 3 Hunt Collection
+#
+# This artifact is automatically used by the Tier 3 auto-hunt triggered when
+# Aegis classifies a session as a potential targeted/human attacker.
+#
+# Deploy to Velociraptor:
+#   docker compose exec velociraptor \
+#     velociraptor --config /etc/velociraptor/config.yaml \
+#     artifacts load /opt/velociraptor/artifacts/aegis-tier3-hunt.yaml
+#
+# Or place in the artifact_definitions_directory configured in server.config.yaml
+# and it will be picked up automatically on restart.
+
+name: Aegis.Response.Tier3Hunt
+description: |
+  Automated forensic collection triggered by Aegis on Tier 3 (targeted attacker)
+  classification. Collects process state, network connections, recent file
+  modifications, and auth events to build the initial picture before a human
+  analyst reviews the alert.
+
+  Parameters are injected by Aegis at hunt creation time.
+
+type: CLIENT
+
+parameters:
+  - name: AegisSessionId
+    description: Aegis session ID that triggered this hunt
+    default: ""
+  - name: AegisSourceIp
+    description: Source IP of the attacking session
+    default: ""
+  - name: AegisTechniques
+    description: Comma-separated ATT&CK technique IDs observed
+    default: ""
+  - name: SearchFilesGlob
+    description: Glob patterns for recently modified file search
+    default: "/tmp/**,/etc/**,/var/tmp/**"
+  - name: AuthLogHours
+    description: How many hours of auth logs to collect
+    type: int
+    default: 24
+
+sources:
+  - name: ProcessTree
+    description: Full process tree at time of detection
+    query: |
+      SELECT Pid, Ppid, Name, Exe, CommandLine, Username,
+             CreateTime, RSS
+      FROM pslist()
+      ORDER BY Ppid, Pid
+
+  - name: NetworkConnections
+    description: Active network connections with owning process
+    query: |
+      SELECT Pid, Name, Status, LocalAddress, LocalPort,
+             RemoteAddress, RemotePort, FamilyString, TypeString
+      FROM netstat()
+      WHERE Status = 'ESTABLISHED' OR Status = 'LISTEN'
+      ORDER BY Status, LocalPort
+
+  - name: RecentFileModifications
+    description: Files modified in the last 2 hours in sensitive directories
+    query: |
+      LET cutoff = now() - 7200  -- 2 hours ago
+      SELECT FullPath, Size, Mtime, Atime, Mode, Uid
+      FROM glob(globs=split(string=SearchFilesGlob, sep=","))
+      WHERE Mtime > cutoff
+        AND NOT FullPath =~ "/(proc|sys|dev)/"
+      ORDER BY Mtime DESC
+      LIMIT 500
+
+  - name: AuthEvents
+    description: Authentication log entries from the last N hours
+    query: |
+      LET cutoff = now() - AuthLogHours * 3600
+      SELECT Timestamp, Pid, Facility, Severity, Message
+      FROM parse_syslog(filename="/var/log/auth.log")
+      WHERE Timestamp > cutoff
+        AND (Message =~ "Failed|Invalid|Accepted|session opened|session closed")
+      ORDER BY Timestamp DESC
+      LIMIT 1000
+
+  - name: CronEntries
+    description: All cron/at jobs (persistence check)
+    query: |
+      SELECT FullPath, Mtime, read_file(filename=FullPath) AS Content
+      FROM glob(globs=[
+        "/etc/cron*/**",
+        "/var/spool/cron/**",
+        "/etc/anacrontab"
+      ])
+      WHERE NOT IsDir
+
+  - name: AegisContext
+    description: Aegis metadata injected into the hunt for correlation
+    query: |
+      SELECT AegisSessionId AS session_id,
+             AegisSourceIp  AS source_ip,
+             AegisTechniques AS techniques,
+             now()           AS collected_at
+      FROM scope()

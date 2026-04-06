@@ -8,6 +8,7 @@
 
 import type { Classification } from '../classifier/scorer.js';
 import { exportEvent } from '../intel-export/gun-exporter.js';
+import { triggerHunt } from './velociraptor-client.js';
 import { logger } from '../shared/logger.js';
 
 export async function route(
@@ -42,6 +43,22 @@ export async function route(
         ...base,
         alert: 'POTENTIAL TARGETED ATTACKER — human review required',
       });
+      // Fire Velociraptor hunt — collect forensics before the attacker cleans up.
+      // Non-blocking relative to the alert: if Velociraptor is down the alert
+      // still fires; hunt result is exported as a linked sub-event.
+      triggerHunt(ip, sessionId, techniqueIds).then(async (hunt) => {
+        if (!hunt.skipped) {
+          await exportEvent('homelab/alerts/security/tier3-' + sessionId + '/hunt', {
+            huntId: hunt.huntId,
+            huntUrl: hunt.huntUrl,
+            artifacts: hunt.artifacts,
+            ts: Date.now(),
+          });
+          logger.warn('TIER 3 — forensic hunt started', {
+            sessionId, ip, huntId: hunt.huntId, huntUrl: hunt.huntUrl,
+          });
+        }
+      }).catch((err) => logger.error('tier-router: hunt dispatch failed', { err, sessionId }));
       break;
   }
 }

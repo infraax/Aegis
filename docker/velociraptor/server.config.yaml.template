@@ -1,0 +1,40 @@
+# Velociraptor Server Configuration — Aegis Deployment
+#
+# IMPORTANT: This is a template. On first run, generate a real config with:
+#   docker run --rm -it velocidex/velociraptor:latest \
+#     velociraptor config generate -i > docker/velociraptor/server.config.yaml
+#
+# Then set VELOCIRAPTOR_API_KEY in your .env by generating an API client config:
+#   docker compose exec velociraptor \
+#     velociraptor --config /etc/velociraptor/config.yaml \
+#     config api_client --name aegis --role analyst,api \
+#     > docker/velociraptor/aegis-api-client.yaml
+#
+# Extract the token from aegis-api-client.yaml and set:
+#   VELOCIRAPTOR_API_KEY=<token>
+#
+# This file is a structural placeholder — the real config is generated and
+# should NOT be committed (it contains TLS certs and secrets).
+# Add docker/velociraptor/server.config.yaml to .gitignore after generation.
+
+Frontend:
+  hostname: localhost
+  bind_address: 0.0.0.0
+  bind_port: 8000
+  public_path: http://localhost:8000/
+
+API:
+  bind_address: 0.0.0.0
+  bind_port: 8889
+
+datastore:
+  implementation: FileBaseDataStore
+  location: /opt/velociraptor/data
+  filestore_directory: /opt/velociraptor/filestore
+
+logging:
+  output_directory: /opt/velociraptor/logs
+  separate_logs_per_component: true
+
+# Artifact definitions — Aegis adds its own custom artifacts here
+artifact_definitions_directory: /opt/velociraptor/artifacts
