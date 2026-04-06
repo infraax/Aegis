@@ -115,6 +115,23 @@ services:
     environment:
       - CANARY_BASE_DOMAIN=${CANARY_BASE_DOMAIN}
 
+  # ── Portainer (Docker management UI — port visibility + container control) ──
+  # Shows every container, every port binding, logs, and resource usage.
+  # Access: http://127.0.0.1:9001  OR  http://100.126.159.28:9001 (via Tailscale)
+  # On first visit: set an admin password immediately.
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: aegis-portainer
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "127.0.0.1:9001:9000"    # Web UI — localhost only; nginx proxies to Tailscale
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only Docker socket
+      - portainer-data:/data
+    command: --no-analytics
+
   # ── Endlessh SSH Tarpit ────────────────────────────────────
   # (runs alongside Cowrie; mapped to a different port here —
   #  switch :22 mapping to this when you want pure tarpit mode)
@@ -301,3 +318,4 @@ volumes:
   wazuh-indexer-data:
   wazuh-manager-data:
   gaffer-data:
+  portainer-data:
