@@ -1,0 +1,141 @@
+<!--
+  Wazuh Custom Rules for Aegis
+
+  These rules are loaded by the Wazuh manager and generate alerts for
+  Aegis-specific events: honeypot access, supply chain anomalies,
+  canary token triggers, and ATT&CK technique-mapped indicators.
+
+  Rule IDs: 100001–100099 (custom range)
+
+  Deploy: bind-mount to /var/ossec/etc/rules/aegis-rules.xml in wazuh-manager
+-->
+<group name="aegis,">
+
+  <!-- ── Honeypot container filesystem writes ────────────────────────────── -->
+  <rule id="100001" level="12">
+    <if_group>syscheck</if_group>
+    <match>/opt/aegis/honeypot</match>
+    <description>Honeypot filesystem modified — possible RCE persistence (T1547)</description>
+    <mitre>
+      <id>T1547</id>
+    </mitre>
+  </rule>
+
+  <!-- ── Aegis canary token callback (JSON log from classifier) ─────────── -->
+  <rule id="100002" level="15">
+    <if_sid>0</if_sid>
+    <field name="eventType">canary_triggered</field>
+    <description>Aegis canary token triggered — credential theft confirmed (T1078)</description>
+    <mitre>
+      <id>T1078</id>
+      <id>T1552</id>
+    </mitre>
+  </rule>
+
+  <!-- ── ARP spoof alert from arp_monitor.py ────────────────────────────── -->
+  <rule id="100003" level="14">
+    <if_sid>0</if_sid>
+    <field name="event_type">gateway_spoof</field>
+    <description>ARP gateway spoof detected — possible Archimedes MITM (T1557.002)</description>
+    <mitre>
+      <id>T1557.002</id>
+    </mitre>
+  </rule>
+
+  <rule id="100004" level="12">
+    <if_sid>0</if_sid>
+    <field name="event_type">arp_conflict</field>
+    <description>ARP MAC conflict detected — possible ARP poisoning (T1557.002)</description>
+    <mitre>
+      <id>T1557.002</id>
+    </mitre>
+  </rule>
+
+  <!-- ── Suricata JA3 malicious hash (forwarded via EVE JSON) ──────────── -->
+  <rule id="100005" level="13">
+    <if_sid>0</if_sid>
+    <field name="@source">suricata</field>
+    <field name="alert.signature">ET JA3</field>
+    <description>Suricata: malicious JA3 TLS fingerprint detected (T1071)</description>
+    <mitre>
+      <id>T1071</id>
+    </mitre>
+  </rule>
+
+  <!-- ── Tetragon SIGKILL enforcement event ────────────────────────────── -->
+  <rule id="100006" level="15">
+    <if_sid>0</if_sid>
+    <field name="action">SIGKILL</field>
+    <field name="eventType">kprobe_connect|kprobe_execve</field>
+    <description>Tetragon: RCE attempt killed at kernel level (T1059/T1071)</description>
+    <mitre>
+      <id>T1059</id>
+      <id>T1071</id>
+    </mitre>
+  </rule>
+
+  <!-- ── SSH brute force from deception interface ──────────────────────── -->
+  <rule id="100007" level="10">
+    <if_sid>5710,5711,5712,5716</if_sid>  <!-- Wazuh built-in SSH fail rules -->
+    <description>SSH brute force on Aegis deception interface</description>
+    <mitre>
+      <id>T1110</id>
+    </mitre>
+  </rule>
+
+  <!-- ── Aegis Tier 3 escalation (high-confidence targeted attacker) ──── -->
+  <rule id="100008" level="14">
+    <if_sid>0</if_sid>
+    <field name="tier">3</field>
+    <field name="confidence" type="pcre2">^0\.[89]|^1\.0</field>
+    <description>Aegis: Tier 3 targeted attacker — Velociraptor hunt triggered</description>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+  </rule>
+
+  <!-- ── DNS tunneling indicators (from dns_monitor.py) ───────────────── -->
+  <rule id="100009" level="12">
+    <if_sid>0</if_sid>
+    <field name="dns_event_type">high_entropy|txt_abuse|tunnel_indicator</field>
+    <description>DNS anomaly: possible tunneling/exfil (T1071.004/T1048)</description>
+    <mitre>
+      <id>T1071.004</id>
+      <id>T1048</id>
+    </mitre>
+  </rule>
+
+  <!-- ── Unexpected outbound connection (from process_net_monitor.py) ─── -->
+  <rule id="100010" level="11">
+    <if_sid>0</if_sid>
+    <field name="event_type">unexpected_outbound</field>
+    <description>Process-net: unknown process initiated outbound connection (T1041)</description>
+    <mitre>
+      <id>T1041</id>
+      <id>T1071</id>
+    </mitre>
+  </rule>
+
+  <!-- ── AI agent detected (sub-2s timing + uniformity) ───────────────── -->
+  <rule id="100011" level="10">
+    <if_sid>0</if_sid>
+    <field name="tier">2</field>
+    <field name="toolIdentified" type="pcre2">(?i)ai_agent|llm|gpt|claude|langchain|crewai</field>
+    <description>Aegis: AI agent detected in deception environment</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+  </rule>
+
+  <!-- ── Supply chain model scan: malicious pickle ─────────────────────── -->
+  <rule id="100012" level="14">
+    <if_sid>0</if_sid>
+    <field name="scan_result">malicious</field>
+    <field name="scanner">fickling</field>
+    <description>Supply chain: malicious pickle/ML model detected (T1195)</description>
+    <mitre>
+      <id>T1195</id>
+    </mitre>
+  </rule>
+
+</group>

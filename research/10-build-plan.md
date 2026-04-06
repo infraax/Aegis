@@ -507,7 +507,164 @@ with OS-level evidence.
 
 ---
 
-## Complete Dependency Graph
+## Deployment Topology — Tailscale Tailnet `tailcf4fee.ts.net`
+
+Aegis lives on the **ThinkPad** and monitors the deception/physical interface.
+All management traffic (dashboards, API, GUN relay) flows over Tailscale.
+
+```
+Tailscale tailnet: tailcf4fee.ts.net   org: infraax@github
+
+  thinkpad         100.126.159.28   Linux   ← AEGIS DEPLOYMENT TARGET
+  pi5-orchestrator 100.69.201.84    Linux   ← GUN relay / Pi5 hub
+  tuf-gaming       100.84.23.76     Linux   ← secondary Linux node
+  macbook-pro      100.77.147.119   macOS   ← primary dev Mac
+  macbook-air      100.100.92.24    macOS   ← secondary Mac
+  iphone171        100.92.198.9     iOS     ← mobile
+
+ACL: full-mesh (* → * → *)  SSH check for member→self
+```
+
+**Environment overrides for ThinkPad deploy:**
+```
+GUN_RELAY_URL=ws://100.69.201.84:8765/gun    # Pi5 over Tailscale
+GAFFER_URL=http://127.0.0.1:8082             # local Docker
+VELOCIRAPTOR_URL=http://127.0.0.1:8889       # local Docker
+WAZUH_API_URL=https://127.0.0.1:55000        # local Docker (Stage 7)
+TAILSCALE_IP=100.126.159.28                  # ThinkPad Tailscale IP
+DECEPTION_IFACE=eth1                         # external/deception interface
+```
+
+**Dashboard access (from any tailnet device):**
+- Wazuh:       https://100.126.159.28:443  (nginx proxy → Wazuh dashboard)
+- Gaffer:      http://100.126.159.28:8082
+- Velociraptor: http://100.126.159.28:8000
+- Aegis health: http://100.126.159.28:9000/health
+
+Wazuh agents auto-register to the ThinkPad manager. All Linux tailnet nodes
+(pi5-orchestrator, tuf-gaming) can optionally run Wazuh agents pointing at
+`100.126.159.28:1514`.
+
+---
+
+## Stage 7 — Endpoint Monitoring (Wazuh)
+**Pattern D (Docker sidecar)**
+**Touches:** `docker/`, `attribution/`, `systemd/`
+**Session budget:** 1 session
+
+### 7A — Wazuh: HIDS + FIM + SIEM alongside Aegis
+
+**What we're doing:**
+Full Wazuh stack (manager + indexer + dashboard) in docker-compose, running
+alongside the existing deception services. A TypeScript bridge reads Wazuh
+alerts via its REST API and exports them to Gaffer. Wazuh agent configured
+as a systemd unit pointing at the local manager.
+
+**Coverage:**
+- Grasshopper/AfterMidnight-style persistence (registry, service, DLL)
+- File integrity monitoring on `/etc`, `/root`, `/bin`, `/usr/bin`
+- Syslog + auditd ingestion
+- ATT&CK T1547, T1574, T1053, T1543, T1055
+
+**How:**
+1. Add to `docker-compose.yml`: wazuh-manager, wazuh-indexer, wazuh-dashboard
+2. Write `wazuh/ossec.conf` — agent config pointing at manager
+3. Write `attribution/wazuh-bridge.ts` — polls Wazuh alerts API, exports to Gaffer
+4. Write `systemd/aegis-wazuh-agent.service`
+
+---
+
+## Stage 8 — DNS Anomaly Detection
+**Pattern C (subprocess bridge)**
+**Touches:** `scripts/`, `attribution/`
+**Session budget:** 1 session
+
+### 8A — DNS tunneling + DGA + C2 beacon via DNS
+
+**What we're doing:**
+Python daemon using scapy that sniffs DNS traffic on the deception interface.
+Calculates subdomain entropy (high entropy = tunneling indicator), detects
+TXT record abuse, abnormal query volumes, domain length anomalies.
+
+**Coverage:**
+- HIVE DNS-based C2 (T1071.004)
+- DNS exfiltration (T1048)
+- DGA domains (T1568)
+- OutlawCountry DNS redirect
+
+---
+
+## Stage 9 — Process-to-Network Attribution
+**Pattern C (subprocess bridge)**
+**Touches:** `scripts/`, `attribution/`
+**Session budget:** 1 session
+
+### 9A — Per-process outbound connection monitoring
+
+**What we're doing:**
+Python daemon using psutil that continuously maps all outbound TCP/UDP
+connections to their originating PID and binary path. Whitelists known-good
+processes; alerts on any unexpected outbound connection.
+
+**Coverage:**
+- HIVE implant phone-home (T1071)
+- Weeping Angel exfiltration (T1041)
+- Any post-exploit C2 callback
+
+---
+
+## Stage 10 — AI Agent Behavioral Detector
+**Pattern A (classifier enhancement)**
+**Touches:** `classifier/signals/`, `honeypot/`
+**Session budget:** 1 session
+
+### 10A — Sub-2s timing, uniformity scoring, prompt injection traps
+
+**What we're doing:**
+Enhance the existing LLM signal detector with AI-specific signatures from
+the Palisade Research honeypot study. Add prompt injection traps to the
+honeypot web service. Wire Vigil-LLM-style canary token embedding.
+
+**Coverage:**
+- AI agent sub-2s response time (empirical threshold)
+- Request structure uniformity (statistical test across header sets)
+- Systematic exhaustive enumeration pattern
+- OWASP LLM01 prompt injection, LLM06 excessive agency
+
+---
+
+## Updated Dependency Graph
+
+```
+Stage 7  (Wazuh)          ← no deps, additive
+Stage 8  (DNS)            ← benefits from Stage 3.5 (Suricata already on iface)
+Stage 9  (process-net)    ← no deps, additive
+Stage 10 (AI detector)    ← builds on Stage 1B (canary) + existing LLM signal
+```
+
+---
+
+## Updated Session Table
+
+| Session | Deliverable | Risk to existing code |
+|---|---|---|
+| S7 | Wazuh stack + bridge + FIM config | Zero — additive Docker service |
+| S8 | DNS scapy daemon + entropy bridge | Additive — new attribution module |
+| S9 | psutil process-net daemon + bridge | Additive — new attribution module |
+| S10 | AI agent signal enhancements + traps | Minimal — extends LLM signal |
+
+---
+
+## Updated Integration Pattern Summary
+
+| Tool | Pattern | Clone repo? | Copy code? | Owns maintenance? |
+|---|---|---|---|---|
+| Wazuh | D (Docker sidecar) | No | No — Docker pull | image tag pin |
+| DNS monitor | C (subprocess) | No | No — scapy script | scripts/ owned |
+| Process-net | C (subprocess) | No | No — psutil script | scripts/ owned |
+| AI detector | A (classifier) | No | No — inline | inline |
+
+
 
 ```
 Stage 1A (ATT&CK STIX)       ← no deps, standalone
