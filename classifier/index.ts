@@ -23,6 +23,7 @@ import { loadStixBundle } from './signals/attack-db.js';
 import { classify } from './scorer.js';
 import { route } from '../router/tier-router.js';
 import { startEveTail, getJA3ForIp } from '../attribution/suricata-tail.js';
+import { startTetragonEvents } from '../attribution/tetragon-events.js';
 import { logger } from '../shared/logger.js';
 
 // Load ATT&CK STIX bundle once at startup — non-fatal if bundle absent
@@ -30,6 +31,9 @@ loadStixBundle();
 
 // Start Suricata EVE tail for JA3/JA4 enrichment — non-fatal if Suricata absent
 startEveTail();
+
+// Start Tetragon eBPF event bridge — non-fatal if Tetragon not installed
+startTetragonEvents();
 
 const app = express();
 app.use(express.json());

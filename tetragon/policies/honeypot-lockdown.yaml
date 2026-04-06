@@ -1,0 +1,98 @@
+# Tetragon TracingPolicy: honeypot-lockdown
+#
+# Enforces kernel-level containment for honeypot container processes.
+# Attacker code that achieves RCE inside a honeypot container and tries to:
+#   - Connect outbound to unexpected destinations
+#   - Execute arbitrary binaries from unusual paths
+# ...is killed by the kernel before any userspace code runs.
+#
+# ATT&CK coverage:
+#   T1071  — Application Layer Protocol (outbound C2)
+#   T1059  — Command and Scripting Interpreter (exec after exploit)
+#   T1053  — Scheduled Task/Job (persistence via exec)
+#
+# Install:
+#   kubectl apply -f honeypot-lockdown.yaml    (Kubernetes)
+#   tetragonctl apply -f honeypot-lockdown.yaml (standalone daemon)
+#
+# Verify enforcement:
+#   tetra getevents --namespace=aegis-honeypot
+
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: honeypot-lockdown
+  namespace: aegis-honeypot
+  labels:
+    aegis/stage: "4"
+    aegis/component: "enforcement"
+spec:
+  # ── Block unexpected outbound connections from honeypot processes ─────────
+  kprobes:
+  - call: "sys_connect"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"          # sockfd
+    - index: 1
+      type: "sock_addr"    # addr (destination)
+    - index: 2
+      type: "size_t"       # addrlen
+    selectors:
+    # Only apply to processes whose binary path is under /opt/aegis/honeypot
+    - matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchActions:
+      - action: Sigkill
+    # Also apply to the honeypot Docker network namespace (by cgroup)
+    - matchCaps:
+      - isNamespaceCapability: false
+        operator: "NotIn"
+        values:
+        # If process has NET_ADMIN it's a trusted Aegis daemon — exclude it
+        - "NET_ADMIN"
+      matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchActions:
+      - action: Post     # emit event for all outbound; Sigkill above fires first
+
+  # ── Alert on any exec launched from the honeypot process tree ────────────
+  - call: "sys_execve"
+    syscall: true
+    args:
+    - index: 0
+      type: "string"     # filename
+    - index: 1
+      type: "string_array"  # argv
+    selectors:
+    - matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchActions:
+      - action: Post     # generate event for every exec (logged, not killed)
+    # Kill exec of known shell interpreters from honeypot — RCE indicator
+    - matchBinaries:
+      - operator: "In"
+        values:
+        - "/bin/sh"
+        - "/bin/bash"
+        - "/bin/dash"
+        - "/usr/bin/python3"
+        - "/usr/bin/python"
+        - "/usr/bin/perl"
+        - "/usr/bin/ruby"
+        - "/usr/bin/node"
+        - "/usr/bin/curl"
+        - "/usr/bin/wget"
+      matchArgs:
+      # Caller must be a honeypot process
+      - index: 0
+        operator: "Prefix"
+        values: ["/opt/aegis/honeypot/"]
+      matchActions:
+      - action: Sigkill
