@@ -188,9 +188,33 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Gaffer (intelligence graph — Stage 5) ────────────────────────────────
+  # Queryable graph database for session/IP/technique relationship analysis.
+  # Switch Aegis to Gaffer backend: set INTEL_BACKEND=gaffer in .env
+  # REST API only on 127.0.0.1 — never exposed on the deception interface.
+  gaffer:
+    image: gchq/gaffer:2.1.0
+    container_name: aegis-gaffer
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "127.0.0.1:8082:8080"    # REST API — internal only (8082 avoids clash with fake-api)
+    volumes:
+      - gaffer-data:/gaffer/data
+      - ./gaffer/schema:/gaffer/config/schema:ro
+    environment:
+      - GAFFER_STORE_PROPERTIES=/gaffer/config/store.properties
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/rest/v2/graph/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
 volumes:
   cowrie-logs:
   velociraptor-data:
   suricata-logs:
   suricata-rules:
   zeek-logs:
+  gaffer-data:
