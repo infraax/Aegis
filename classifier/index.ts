@@ -22,10 +22,14 @@ import { matchToolSignature } from './signals/tool-sigs.js';
 import { loadStixBundle } from './signals/attack-db.js';
 import { classify } from './scorer.js';
 import { route } from '../router/tier-router.js';
+import { startEveTail, getJA3ForIp } from '../attribution/suricata-tail.js';
 import { logger } from '../shared/logger.js';
 
 // Load ATT&CK STIX bundle once at startup — non-fatal if bundle absent
 loadStixBundle();
+
+// Start Suricata EVE tail for JA3/JA4 enrichment — non-fatal if Suricata absent
+startEveTail();
 
 const app = express();
 app.use(express.json());
@@ -66,11 +70,16 @@ app.post('/event', (req, res) => {
       method: string;
       path: string;
       headers: Record<string, string>;
-      ja3?: string;
-      ja4?: string;
+      ja3?: string;   // from body OR extracted from X-Aegis-JA3 header below
+      ja4?: string;   // from body OR extracted from X-Aegis-JA4 header below
       delayMs?: number;
       responseSnippet?: string;
     };
+
+  // Resolve JA3/JA4: body fields > proxy-injected headers > Suricata EVE store (by IP)
+  const eveEntry = getJA3ForIp(ip);
+  const resolvedJa3 = ja3 ?? headers['x-aegis-ja3'] ?? eveEntry?.ja3 ?? null;
+  const resolvedJa4 = ja4 ?? headers['x-aegis-ja4'] ?? eveEntry?.ja4 ?? null;
 
   const sessionId = existingId ?? uuidv4();
   const now = Date.now();
@@ -112,7 +121,7 @@ app.post('/event', (req, res) => {
     });
     const toolMatch = matchToolSignature(s.headers['user-agent'] ?? '', s.headers);
 
-    const classification = classify({ sessionId, timing, headers: headerSig, tls, behavioral, llm, toolMatch });
+    const classification = classify({ sessionId, timing, headers: headerSig, tls, behavioral, llm, toolMatch, ja3: resolvedJa3, ja4: resolvedJa4 });
 
     logger.info('classified', { sessionId, ip, tier: classification.tier, confidence: classification.confidence, tool: classification.toolIdentified });
 

@@ -1,0 +1,77 @@
+%YAML 1.1
+---
+# Suricata configuration for Aegis deception network tap
+# Listens passively on the deception interface (AF_PACKET)
+# Outputs EVE JSON for Aegis consumption
+
+vars:
+  address-groups:
+    HOME_NET: "[172.30.0.0/24]"       # deception-net subnet
+    EXTERNAL_NET: "!$HOME_NET"
+  port-groups:
+    HTTP_PORTS: "80"
+    HTTPS_PORTS: "443"
+    SSH_PORTS: "22"
+
+af-packet:
+  - interface: eth1                    # override with DECEPTION_IFACE env var
+    threads: auto
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes
+    ring-size: 2048
+    block-size: 32768
+
+outputs:
+  # EVE JSON — the primary output Aegis reads
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: /var/log/suricata/eve.json
+      pcap-file: false
+      community-id: true             # adds community flow ID for Zeek correlation
+      types:
+        - alert:
+            payload: no              # don't log raw payload — we want metadata only
+            payload-printable: no
+            packet: no
+            metadata: yes
+            tagged-packets: no
+        - tls:
+            extended: yes            # includes ja3, ja3s, SNI, cert fields
+        - http:
+            extended: yes
+        - dns:
+            query: yes
+            answer: yes
+        - flow
+        - stats:
+            totals: yes
+            threads: no
+
+  - fast:
+      enabled: yes
+      filename: /var/log/suricata/fast.log
+
+app-layer:
+  protocols:
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: "443,8443,8889,8080"    # include Velociraptor API port
+      ja3-fingerprints: yes         # ← enables JA3 hash computation
+      ja4-fingerprints: yes         # ← enables JA4 (requires Suricata 7+)
+
+# Update ET Open rules on container start
+rule-files:
+  - /var/lib/suricata/rules/suricata.rules
+
+default-rule-path: /var/lib/suricata/rules
+
+# Suppress noisy low-value rules to keep SNR high
+suppress:
+  - gen_id: 1
+    sig_id: 2210020            # ET SCAN Nessus — expected in deception env
+  - gen_id: 1
+    sig_id: 2010935            # ET POLICY PE EXE Download — too broad

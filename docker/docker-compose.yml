@@ -129,6 +129,39 @@ services:
       - -max_clients=10000
       - -logtostderr
 
+  # ── Suricata (network IDS + JA3/JA4 TLS fingerprinting) ──────────────────
+  # Passively taps the deception interface — never injects or modifies traffic.
+  # EVE JSON output is read by attribution/suricata-tail.ts for JA3 signal enrichment.
+  # Run `docker compose exec suricata suricata-update` to refresh ET Open rules.
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: aegis-suricata
+    restart: unless-stopped
+    network_mode: host               # needs raw packet access to deception interface
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    volumes:
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - suricata-logs:/var/log/suricata
+      - suricata-rules:/var/lib/suricata/rules
+    environment:
+      - SURICATA_OPTIONS=-c /etc/suricata/suricata.yaml --af-packet=${DECEPTION_IFACE:-eth1}
+    command: ["/bin/sh", "-c", "suricata-update --no-reload && suricata $$SURICATA_OPTIONS"]
+
+  # ── Zeek (network analysis framework — RITA beacon scoring input) ──────────
+  zeek:
+    image: zeekurity/zeek:latest
+    container_name: aegis-zeek
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
+      - zeek-logs:/usr/local/zeek/logs
+    command: ["zeek", "-i", "${DECEPTION_IFACE:-eth1}", "-C", "local"]
+
   # ── Velociraptor (Tier 3 forensic response) ───────────────────────────────
   # Binds ONLY to 127.0.0.1 — never exposed on the deception interface.
   # API key is generated on first run: docker compose exec velociraptor
@@ -158,3 +191,6 @@ services:
 volumes:
   cowrie-logs:
   velociraptor-data:
+  suricata-logs:
+  suricata-rules:
+  zeek-logs:

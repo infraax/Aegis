@@ -4,6 +4,7 @@ import type { TLSSignal } from './signals/tls.js';
 import type { BehavioralSignal } from './signals/behavioral.js';
 import type { LLMSignal } from './signals/llm-detector.js';
 import type { ToolMatch } from './signals/tool-sigs.js';
+import { analyzeJA3, type JA3Signal } from './signals/ja3-signal.js';
 
 export type Tier = 1 | 2 | 3;
 
@@ -38,19 +39,30 @@ export function classify(input: {
   behavioral: BehavioralSignal;
   llm: LLMSignal;
   toolMatch: ToolMatch | null;
+  ja3?: string | null;
+  ja4?: string | null;
 }): Classification {
   const { sessionId, timing, headers, tls, behavioral, llm, toolMatch } = input;
+  const ja3Signal: JA3Signal = analyzeJA3(input.ja3 ?? null, input.ja4 ?? null);
+
+  // JA3 weight is reduced when absent (confidence=0) so existing signal weights
+  // stay in proportion. When present and malicious, it carries 0.15 weight.
+  const ja3Weight = ja3Signal.ja3Hash || ja3Signal.ja4Hash ? 0.15 : 0;
+  const baseWeightScale = ja3Weight > 0 ? (1 - ja3Weight) : 1;
 
   const signals: SignalResult[] = [
-    { name: 'timing',     score: timing.confidence,    weight: 0.20 },
-    { name: 'headers',    score: headers.confidence,   weight: 0.10 },
-    { name: 'tls',        score: tls.confidence,       weight: 0.15 },
-    { name: 'behavioral', score: behavioral.confidence, weight: 0.20 },
-    { name: 'llm',        score: llm.confidence,       weight: 0.35 },
+    { name: 'timing',     score: timing.confidence,     weight: 0.20 * baseWeightScale },
+    { name: 'headers',    score: headers.confidence,    weight: 0.10 * baseWeightScale },
+    { name: 'tls',        score: tls.confidence,        weight: 0.15 * baseWeightScale },
+    { name: 'behavioral', score: behavioral.confidence, weight: 0.20 * baseWeightScale },
+    { name: 'llm',        score: llm.confidence,        weight: 0.35 * baseWeightScale },
+    { name: 'ja3',        score: ja3Signal.confidence,  weight: ja3Weight },
   ];
 
   const weightedScore = signals.reduce((acc, s) => acc + s.score * s.weight, 0);
-  const toolIdentified = toolMatch?.tool ?? llm.detectedFormat ?? null;
+
+  // Tool identification: JA3 match takes priority over UA/LLM detection
+  const toolIdentified = ja3Signal.matchedTool ?? toolMatch?.tool ?? llm.detectedFormat ?? null;
 
   // Determine tier
   let tier: Tier;
