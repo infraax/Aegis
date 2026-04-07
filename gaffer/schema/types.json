@@ -1,0 +1,37 @@
+{
+  "types": {
+    "string": {
+      "description": "A Java String",
+      "class": "java.lang.String",
+      "validateFunctions": [
+        {
+          "class": "uk.gov.gchq.koryphe.impl.predicate.Exists"
+        }
+      ]
+    },
+    "integer": {
+      "description": "A Java Integer",
+      "class": "java.lang.Integer"
+    },
+    "long": {
+      "description": "A Java Long",
+      "class": "java.lang.Long"
+    },
+    "double": {
+      "description": "A Java Double",
+      "class": "java.lang.Double",
+      "aggregateFunction": {
+        "class": "uk.gov.gchq.koryphe.impl.binaryoperator.Max"
+      }
+    },
+    "true": {
+      "description": "A simple boolean flag",
+      "class": "java.lang.Boolean",
+      "validateFunctions": [
+        {
+          "class": "uk.gov.gchq.koryphe.impl.predicate.IsTrue"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.env
+*.env
+.env.*
+*.sqlite
+*.db
+/geoip/
+/logs/
+*.log
+.DS_Store
+# fickling scan output artifacts
+safety_results.json
+# Secrets / keys — never commit
+*.key
+*.pem
+*.p12
+*.pfx
+*_key.json
+*-credentials.json
+wazuh/config/authd.pass
+wazuh/config/*.key
+tailscale*.key
+tskey-*
+# Wazuh generated state
+wazuh/data/
+wazuh/logs/
+# Local overrides
+.env.local
+.env.production

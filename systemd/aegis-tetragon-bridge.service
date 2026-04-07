@@ -1,0 +1,60 @@
+# systemd unit: aegis-tetragon-bridge
+#
+# Manages the Aegis TypeScript bridge that reads Tetragon eBPF events from
+# the Tetragon Unix socket and exports them into the Aegis event graph.
+#
+# This unit depends on tetragon.service (the eBPF daemon) being active.
+# If tetragon is not installed, this unit will start but the bridge will
+# detect ENOENT on the socket and disable itself gracefully.
+#
+# Install:
+#   sudo cp systemd/aegis-tetragon-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aegis-tetragon-bridge
+
+[Unit]
+Description=Aegis Tetragon eBPF Event Bridge
+Documentation=https://tetragon.io/docs/
+After=network.target tetragon.service
+Wants=tetragon.service
+PartOf=aegis.target
+
+[Service]
+Type=simple
+User=aegis
+Group=aegis
+WorkingDirectory=/opt/aegis
+
+# Point Node.js at the compiled bridge entry-point
+ExecStart=/usr/bin/node /opt/aegis/dist/classifier/index.js
+
+# No special capabilities needed — the bridge only reads the Tetragon socket
+# which is owned by the tetragon group. Add aegis user to tetragon group:
+#   sudo usermod -aG tetragon aegis
+SupplementaryGroups=tetragon
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/aegis /run/aegis
+
+# Environment
+EnvironmentFile=-/etc/aegis/aegis.env
+Environment=NODE_ENV=production
+Environment=TETRAGON_SOCK=/var/run/tetragon/tetragon.sock
+
+# Restart on crash, but not if we exit with 0 (intentional)
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-tetragon-bridge
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=Aegis ARP Integrity Monitor
+Documentation=https://github.com/infraax/Aegis
+After=network.target aegis-classifier.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/aegis/.env
+ExecStart=/usr/bin/python3 /opt/aegis/scripts/arp_monitor.py \
+  --iface ${ARP_MONITOR_IFACE:-eth1} \
+  --gateway ${ARP_MONITOR_GATEWAY:-}
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-arp-monitor
+
+# Minimum privilege — only raw socket needed
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=aegis.target

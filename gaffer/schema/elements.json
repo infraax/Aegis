@@ -1,0 +1,141 @@
+{
+  "entities": {
+    "Session": {
+      "description": "An Aegis classified session",
+      "vertex": "string",
+      "properties": {
+        "sessionId":    "string",
+        "ip":           "string",
+        "tier":         "integer",
+        "confidence":   "double",
+        "techniqueIds": "string",
+        "toolIdentified": "string",
+        "firstSeen":    "long",
+        "lastSeen":     "long"
+      }
+    },
+    "IPAddress": {
+      "description": "An observed source IP address",
+      "vertex": "string",
+      "properties": {
+        "ip":           "string",
+        "country":      "string",
+        "firstSeen":    "long",
+        "lastSeen":     "long",
+        "sessionCount": "integer"
+      }
+    },
+    "Tool": {
+      "description": "A detected attack tool or framework",
+      "vertex": "string",
+      "properties": {
+        "name":       "string",
+        "firstSeen":  "long",
+        "seenCount":  "integer"
+      }
+    },
+    "Technique": {
+      "description": "A MITRE ATT&CK technique observed",
+      "vertex": "string",
+      "properties": {
+        "techniqueId": "string",
+        "firstSeen":   "long",
+        "seenCount":   "integer"
+      }
+    },
+    "TetragonEvent": {
+      "description": "A kernel-level enforcement event from Tetragon",
+      "vertex": "string",
+      "properties": {
+        "eventType":    "string",
+        "action":       "string",
+        "binary":       "string",
+        "pid":          "integer",
+        "technique":    "string",
+        "severity":     "string",
+        "ts":           "long"
+      }
+    },
+    "ProvenanceEvent": {
+      "description": "A CamFlow OS-level provenance causal chain correlated to a session",
+      "vertex": "string",
+      "properties": {
+        "sessionId":  "string",
+        "ip":         "string",
+        "eventCount": "integer",
+        "labels":     "string",
+        "techniques": "string",
+        "startedAt":  "long",
+        "ts":         "long"
+      }
+    },
+    "ARPEvent": {
+      "description": "An ARP integrity violation (T1557.002)",
+      "vertex": "string",
+      "properties": {
+        "eventType":  "string",
+        "senderIp":   "string",
+        "senderMac":  "string",
+        "trustedMac": "string",
+        "severity":   "string",
+        "ts":         "long"
+      }
+    }
+  },
+  "edges": {
+    "SessionFromIP": {
+      "description": "Session originated from an IP address",
+      "source":      "Session",
+      "destination": "IPAddress",
+      "directed":    true,
+      "properties": {
+        "firstSeen": "long"
+      }
+    },
+    "SessionUsedTool": {
+      "description": "Session was identified using a specific tool",
+      "source":      "Session",
+      "destination": "Tool",
+      "directed":    true,
+      "properties": {
+        "confidence": "double"
+      }
+    },
+    "SessionUsedTechnique": {
+      "description": "Session triggered an ATT&CK technique",
+      "source":      "Session",
+      "destination": "Technique",
+      "directed":    true,
+      "properties": {
+        "seenAt": "long"
+      }
+    },
+    "SessionTriggeredKernelEvent": {
+      "description": "A Tetragon enforcement event was triggered during a session",
+      "source":      "Session",
+      "destination": "TetragonEvent",
+      "directed":    true,
+      "properties": {
+        "seenAt": "long"
+      }
+    },
+    "SessionHasProvenance": {
+      "description": "A provenance causal chain was captured for a session",
+      "source":      "Session",
+      "destination": "ProvenanceEvent",
+      "directed":    true,
+      "properties": {
+        "capturedAt": "long"
+      }
+    },
+    "IPTriggeredARPEvent": {
+      "description": "An IP address was involved in an ARP spoof event",
+      "source":      "IPAddress",
+      "destination": "ARPEvent",
+      "directed":    true,
+      "properties": {
+        "seenAt": "long"
+      }
+    }
+  }
+}

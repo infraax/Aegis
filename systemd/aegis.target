@@ -1,0 +1,12 @@
+[Unit]
+Description=Aegis — All Services
+After=network-online.target docker.service
+Wants=\
+  aegis-classifier.service \
+  aegis-tarpit-http.service \
+  aegis-honeypot.service \
+  aegis-canary-server.service \
+  aegis-supply-chain.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,58 @@
+{
+  "type": "bundle",
+  "id": "bundle--test-fixture",
+  "spec_version": "2.1",
+  "objects": [
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--test-1",
+      "name": "Exploit Public-Facing Application",
+      "external_references": [
+        { "source_name": "mitre-attack", "external_id": "T1190" }
+      ],
+      "x_mitre_platforms": ["Linux", "Windows", "macOS"],
+      "x_mitre_detection": "Monitor application logs for abnormal behavior"
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--test-2",
+      "name": "Network Service Discovery",
+      "external_references": [
+        { "source_name": "mitre-attack", "external_id": "T1046" }
+      ],
+      "x_mitre_platforms": ["Linux", "Windows", "macOS"]
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--test-3",
+      "name": "Brute Force",
+      "external_references": [
+        { "source_name": "mitre-attack", "external_id": "T1110" }
+      ],
+      "x_mitre_platforms": ["Linux", "Windows", "macOS"]
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--test-4",
+      "name": "Exploit Public-Facing Application: WordPress",
+      "external_references": [
+        { "source_name": "mitre-attack", "external_id": "T1190.001" }
+      ],
+      "x_mitre_platforms": ["Linux", "Windows"]
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--test-5",
+      "name": "OS Credential Dumping",
+      "external_references": [
+        { "source_name": "mitre-attack", "external_id": "T1003" }
+      ],
+      "x_mitre_platforms": ["Linux", "Windows", "macOS"]
+    },
+    {
+      "type": "identity",
+      "id": "identity--test-org",
+      "name": "MITRE ATT&CK"
+    }
+  ]
+}

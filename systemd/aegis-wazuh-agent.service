@@ -1,0 +1,44 @@
+# systemd unit: aegis-wazuh-agent
+#
+# Runs the Wazuh agent on the ThinkPad host (or any other tailnet Linux node).
+# On the ThinkPad, the manager is local (127.0.0.1).
+# On remote nodes (pi5-orchestrator, tuf-gaming), set:
+#   Environment=WAZUH_MANAGER=100.126.159.28
+#
+# Install:
+#   sudo cp systemd/aegis-wazuh-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aegis-wazuh-agent
+#
+# Prerequisites (agent binary — separate from manager Docker container):
+#   curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo apt-key add -
+#   echo "deb https://packages.wazuh.com/4.x/apt/ stable main" | \
+#     sudo tee /etc/apt/sources.list.d/wazuh.list
+#   sudo apt update && sudo apt install wazuh-agent
+#   sudo WAZUH_MANAGER=127.0.0.1 WAZUH_AGENT_NAME=$(hostname) \
+#     /var/ossec/bin/agent-auth -m 127.0.0.1
+
+[Unit]
+Description=Wazuh Security Agent (Aegis)
+Documentation=https://documentation.wazuh.com
+After=network.target aegis-docker.service
+Wants=network.target
+
+[Service]
+Type=forking
+ExecStart=/var/ossec/bin/wazuh-agentd
+ExecStop=/var/ossec/bin/wazuh-control stop
+PIDFile=/var/ossec/var/run/wazuh-agentd.pid
+
+Environment=WAZUH_MANAGER=127.0.0.1
+EnvironmentFile=-/etc/aegis/aegis.env
+
+Restart=on-failure
+RestartSec=10s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wazuh-agent
+
+[Install]
+WantedBy=multi-user.target

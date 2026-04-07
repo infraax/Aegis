@@ -1,0 +1,18 @@
+[Unit]
+Description=Aegis Honeypot (Docker Compose deception services)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/aegis/docker
+EnvironmentFile=/opt/aegis/.env
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-honeypot
+
+[Install]
+WantedBy=multi-user.target

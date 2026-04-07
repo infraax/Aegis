@@ -1,0 +1,149 @@
+# Tetragon TracingPolicy: exfil-alert
+#
+# Alerts on any write to sensitive filesystem paths (persistence/exfil indicators)
+# originating from honeypot container processes.
+#
+# ATT&CK coverage:
+#   T1565.001 — Stored Data Manipulation (writes to /etc)
+#   T1547     — Boot/Logon Autostart Execution (writes to /etc/cron*, /etc/init*)
+#   T1552.001 — Credentials In Files (reads from /root, /home)
+#   T1083     — File and Directory Discovery
+#   T1041     — Exfiltration Over C2 Channel (preceded by sensitive file reads)
+#
+# Install:
+#   kubectl apply -f exfil-alert.yaml    (Kubernetes)
+#   tetragonctl apply -f exfil-alert.yaml (standalone daemon)
+
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: exfil-alert
+  namespace: aegis-honeypot
+  labels:
+    aegis/stage: "4"
+    aegis/component: "enforcement"
+spec:
+  kprobes:
+  # ── Writes to /etc (persistence / config tampering) ──────────────────────
+  - call: "sys_openat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"        # dirfd
+    - index: 1
+      type: "string"     # pathname
+    - index: 2
+      type: "int"        # flags (O_WRONLY / O_RDWR / O_CREAT)
+    selectors:
+    - matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchArgs:
+      - index: 2
+        operator: "Mask"
+        values: ["0x1"]    # O_WRONLY bit
+      - index: 1
+        operator: "Prefix"
+        values:
+        - "/etc/"
+      matchActions:
+      - action: Post       # emit event; do not kill (we want to observe full TTPs)
+
+  # ── Writes or reads in /root ──────────────────────────────────────────────
+  - call: "sys_openat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"
+    - index: 1
+      type: "string"
+    - index: 2
+      type: "int"
+    selectors:
+    - matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchArgs:
+      - index: 1
+        operator: "Prefix"
+        values:
+        - "/root/"
+      matchActions:
+      - action: Post
+
+  # ── Reads in /home — credential harvesting ────────────────────────────────
+  - call: "sys_openat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"
+    - index: 1
+      type: "string"
+    - index: 2
+      type: "int"
+    selectors:
+    - matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchArgs:
+      - index: 1
+        operator: "Prefix"
+        values:
+        - "/home/"
+      matchActions:
+      - action: Post
+
+  # ── Reading /proc/net/* or /proc/*/net/ — network recon inside container ──
+  - call: "sys_openat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"
+    - index: 1
+      type: "string"
+    - index: 2
+      type: "int"
+    selectors:
+    - matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchArgs:
+      - index: 1
+        operator: "Prefix"
+        values:
+        - "/proc/net/"
+      matchActions:
+      - action: Post
+
+  # ── Writing to cron paths (persistence) ───────────────────────────────────
+  - call: "sys_openat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"
+    - index: 1
+      type: "string"
+    - index: 2
+      type: "int"
+    selectors:
+    - matchBinaries:
+      - operator: "Prefix"
+        values:
+        - "/opt/aegis/honeypot/"
+      matchArgs:
+      - index: 2
+        operator: "Mask"
+        values: ["0x1"]    # O_WRONLY
+      - index: 1
+        operator: "Prefix"
+        values:
+        - "/etc/cron"
+        - "/etc/rc"
+        - "/etc/init"
+        - "/var/spool/cron"
+      matchActions:
+      - action: Sigkill    # kill process attempting cron persistence

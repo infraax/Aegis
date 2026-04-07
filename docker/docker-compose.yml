@@ -1,0 +1,321 @@
+version: '3.8'
+
+# ============================================================
+# Aegis Deception Services
+#
+# All containers bind ONLY to DECEPTION_IP (set in .env or
+# as an environment variable). Never bridge to the management
+# interface (wg0 / eth0).
+#
+# Usage:
+#   export DECEPTION_IP=<eth1-ip>
+#   docker compose up -d
+# ============================================================
+
+networks:
+  deception-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+
+  # ── SSH Honeypot (Cowrie) ──────────────────────────────────
+  fake-ssh:
+    image: cowrie/cowrie:latest
+    container_name: aegis-fake-ssh
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:22:2222"
+    volumes:
+      - ./honeypot/cowrie-config:/cowrie/etc:ro
+      - ./honeypot/filesystem:/cowrie/var/lib/cowrie/downloads:ro
+      - cowrie-logs:/cowrie/var/log/cowrie
+    environment:
+      - COWRIE_HOSTNAME=web-prod-01
+
+  # ── Fake Web Application ───────────────────────────────────
+  fake-web:
+    build:
+      context: ./honeypot/services/web
+      dockerfile: Dockerfile
+    container_name: aegis-fake-web
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:80:3000"
+      - "${DECEPTION_IP}:443:3443"
+    volumes:
+      - ./honeypot/filesystem:/app/files:ro
+      - ./honeypot/context-bombs:/app/bombs:ro
+      - ./honeypot/credentials:/app/creds:ro
+      - ./honeypot/config:/app/config:ro
+    environment:
+      - NODE_ENV=production
+      - CANARY_BASE_DOMAIN=${CANARY_BASE_DOMAIN}
+      - CLASSIFIER_URL=http://host.docker.internal:9000
+
+  # ── Fake PostgreSQL ────────────────────────────────────────
+  fake-db:
+    build:
+      context: ./honeypot/services/postgres
+      dockerfile: Dockerfile
+    container_name: aegis-fake-db
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:5432:5432"
+    environment:
+      - POSTGRES_DB=meridian_prod
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=Mer1d1an#2019
+
+  # ── Fake Redis ─────────────────────────────────────────────
+  fake-redis:
+    build:
+      context: ./honeypot/services/redis
+      dockerfile: Dockerfile
+    container_name: aegis-fake-redis
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:6379:6379"
+
+  # ── Fake Internal API ──────────────────────────────────────
+  fake-api:
+    build:
+      context: ./honeypot/services/api
+      dockerfile: Dockerfile
+    container_name: aegis-fake-api
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:8080:8080"
+    environment:
+      - CANARY_BASE_DOMAIN=${CANARY_BASE_DOMAIN}
+
+  # ── Fake Admin Panel ───────────────────────────────────────
+  fake-admin:
+    build:
+      context: ./honeypot/services/admin
+      dockerfile: Dockerfile
+    container_name: aegis-fake-admin
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "${DECEPTION_IP}:8443:8443"
+    environment:
+      - CANARY_BASE_DOMAIN=${CANARY_BASE_DOMAIN}
+
+  # ── Portainer (Docker management UI — port visibility + container control) ──
+  # Shows every container, every port binding, logs, and resource usage.
+  # Access: http://127.0.0.1:9001  OR  http://100.126.159.28:9001 (via Tailscale)
+  # On first visit: set an admin password immediately.
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: aegis-portainer
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "127.0.0.1:9001:9000"    # Web UI — localhost only; nginx proxies to Tailscale
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only Docker socket
+      - portainer-data:/data
+    command: --no-analytics
+
+  # ── Endlessh SSH Tarpit ────────────────────────────────────
+  # (runs alongside Cowrie; mapped to a different port here —
+  #  switch :22 mapping to this when you want pure tarpit mode)
+  endlessh:
+    image: shizunge/endlessh-go:latest
+    container_name: aegis-endlessh
+    restart: unless-stopped
+    networks:
+      - deception-net
+    command:
+      - -interval_ms=1000
+      - -max_clients=10000
+      - -logtostderr
+
+  # ── Suricata (network IDS + JA3/JA4 TLS fingerprinting) ──────────────────
+  # Passively taps the deception interface — never injects or modifies traffic.
+  # EVE JSON output is read by attribution/suricata-tail.ts for JA3 signal enrichment.
+  # Run `docker compose exec suricata suricata-update` to refresh ET Open rules.
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: aegis-suricata
+    restart: unless-stopped
+    network_mode: host               # needs raw packet access to deception interface
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    volumes:
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - suricata-logs:/var/log/suricata
+      - suricata-rules:/var/lib/suricata/rules
+    environment:
+      - SURICATA_OPTIONS=-c /etc/suricata/suricata.yaml --af-packet=${DECEPTION_IFACE:-eth1}
+    command: ["/bin/sh", "-c", "suricata-update --no-reload && suricata $$SURICATA_OPTIONS"]
+
+  # ── Zeek (network analysis framework — RITA beacon scoring input) ──────────
+  zeek:
+    image: zeekurity/zeek:latest
+    container_name: aegis-zeek
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
+      - zeek-logs:/usr/local/zeek/logs
+    command: ["zeek", "-i", "${DECEPTION_IFACE:-eth1}", "-C", "local"]
+
+  # ── Velociraptor (Tier 3 forensic response) ───────────────────────────────
+  # Binds ONLY to 127.0.0.1 — never exposed on the deception interface.
+  # API key is generated on first run: docker compose exec velociraptor
+  #   velociraptor --config /etc/velociraptor/config.yaml config api_client
+  #   --name aegis --role analyst,api > /etc/velociraptor/api.config.yaml
+  velociraptor:
+    image: velocidex/velociraptor:latest
+    container_name: aegis-velociraptor
+    restart: unless-stopped
+    volumes:
+      - velociraptor-data:/opt/velociraptor
+      - ./velociraptor/server.config.yaml:/etc/velociraptor/config.yaml:ro
+    ports:
+      - "127.0.0.1:8889:8889"    # REST/gRPC-gateway API  — management only
+      - "127.0.0.1:8000:8000"    # Web UI                 — management only
+    networks:
+      - deception-net
+    environment:
+      - VELOCIRAPTOR_CONFIG=/etc/velociraptor/config.yaml
+    command: ["frontend", "--config", "/etc/velociraptor/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8889/api/v1/GetServerInfo"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Wazuh Indexer (OpenSearch) — Stage 7 ────────────────────────────────
+  wazuh-indexer:
+    image: wazuh/wazuh-indexer:4.7.0
+    container_name: aegis-wazuh-indexer
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "127.0.0.1:9200:9200"
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - bootstrap.memory_lock=true
+      - discovery.type=single-node
+      - network.host=0.0.0.0
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Wazuh Manager — Stage 7 ──────────────────────────────────────────────
+  # HIDS manager: receives events from agents, runs rules, generates alerts.
+  # REST API on 55000 (127.0.0.1 only — accessible over Tailscale via ThinkPad IP)
+  # Agent registration: TCP 1514  |  Syslog: UDP 514
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.7.0
+    container_name: aegis-wazuh-manager
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "127.0.0.1:55000:55000"   # REST API  — management only
+      - "0.0.0.0:1514:1514/tcp"   # Agent registration (all ifaces — Tailscale nodes need this)
+      - "127.0.0.1:514:514/udp"   # Syslog input
+    volumes:
+      - wazuh-manager-data:/var/ossec/data
+      - ./wazuh/config/ossec.conf:/var/ossec/etc/ossec.conf:ro
+      - ./wazuh/custom-rules:/var/ossec/etc/rules:ro
+      - suricata-logs:/var/log/suricata:ro   # Wazuh reads Suricata EVE JSON
+    environment:
+      - WAZUH_API_USER=${WAZUH_API_USER:-wazuh-wui}
+      - WAZUH_API_PASSWORD=${WAZUH_API_PASSWORD:?Set WAZUH_API_PASSWORD in .env}
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://127.0.0.1:55000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Wazuh Dashboard (Kibana/OpenSearch Dashboards) — Stage 7 ─────────────
+  # Web UI accessible from any Tailscale device at https://100.126.159.28:443
+  # (nginx on ThinkPad proxies HTTPS → this container on 5601)
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.7.0
+    container_name: aegis-wazuh-dashboard
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "127.0.0.1:5601:5601"   # Dashboard — proxied by nginx over Tailscale
+    environment:
+      - OPENSEARCH_HOSTS=https://wazuh-indexer:9200
+      - WAZUH_API_URL=https://wazuh-manager
+      - WAZUH_API_PORT=55000
+      - API_USERNAME=${WAZUH_API_USER:-wazuh-wui}
+      - API_PASSWORD=${WAZUH_API_PASSWORD:?Set WAZUH_API_PASSWORD in .env}
+    depends_on:
+      wazuh-manager:
+        condition: service_healthy
+
+  # ── Gaffer (intelligence graph — Stage 5) ────────────────────────────────
+  # Queryable graph database for session/IP/technique relationship analysis.
+  # Switch Aegis to Gaffer backend: set INTEL_BACKEND=gaffer in .env
+  # REST API only on 127.0.0.1 — never exposed on the deception interface.
+  gaffer:
+    image: gchq/gaffer:2.1.0
+    container_name: aegis-gaffer
+    restart: unless-stopped
+    networks:
+      - deception-net
+    ports:
+      - "127.0.0.1:8082:8080"    # REST API — internal only (8082 avoids clash with fake-api)
+    volumes:
+      - gaffer-data:/gaffer/data
+      - ./gaffer/schema:/gaffer/config/schema:ro
+    environment:
+      - GAFFER_STORE_PROPERTIES=/gaffer/config/store.properties
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/rest/v2/graph/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  cowrie-logs:
+  velociraptor-data:
+  suricata-logs:
+  suricata-rules:
+  zeek-logs:
+  wazuh-indexer-data:
+  wazuh-manager-data:
+  gaffer-data:
+  portainer-data:

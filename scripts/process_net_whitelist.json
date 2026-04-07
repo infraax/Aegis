@@ -1,0 +1,21 @@
+{
+  "_comment": "Trusted processes and destination ranges for process-net monitor. Edit before deploying.",
+  "binaries": [
+    "/usr/bin/node",
+    "/usr/local/bin/node",
+    "/usr/bin/python3",
+    "/usr/sbin/sshd",
+    "/usr/bin/tailscale",
+    "/usr/sbin/tailscaled",
+    "/var/ossec/bin/wazuh-agentd",
+    "/usr/bin/dockerd",
+    "docker-proxy"
+  ],
+  "destinations": [
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10"
+  ]
+}
